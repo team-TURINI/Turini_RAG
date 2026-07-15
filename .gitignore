@@ -1,0 +1,15 @@
+# Env
+.env
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# 빌드 산출물 / 실험 결과
+vectorstores/
+results/
+
+# 데이터 (공유 레포엔 올리지 않음 — README 만 추적)
+data/*
+!data/README.md
