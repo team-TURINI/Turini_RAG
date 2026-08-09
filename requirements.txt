@@ -6,7 +6,14 @@ openai>=1.30
 langchain-openai>=0.1.7
 langchain-community>=0.0.30
 langchain-core>=0.1.40
+langchain-text-splitters>=0.0.1
 
 # Vector store
 faiss-cpu>=1.7.4
 numpy>=1.24
+
+# 리트리버 실험 (BM25 / Hybrid)
+#   ⚠ 버전을 고정한다. 버전이 다르면 토크나이즈 결과와 기본 파라미터가 달라져
+#     "BM25 비교"가 아니라 "라이브러리 버전 비교"가 된다.
+rank_bm25==0.2.2
+kiwipiepy==0.23.2
