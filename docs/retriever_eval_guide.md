@@ -37,19 +37,19 @@ pip install -r requirements.txt
 | 파일 | 경로 | 비고 |
 |---|---|---|
 | 평가셋 | `data/testset/rag_testset_retriever_v1v2_fixed450_team_eval.json` | 157문항 |
-| 코퍼스 | `data/chunking_data/fixed_450_70/chunks.jsonl` | 1,767청크 |
+| 코퍼스 | `data/chunking_data/fixed_450_70/clean_chunks_450_70.jsonl` | 1,755청크 |
 | Dense 인덱스 | `vectorstores/fixed_450_70/` | 구글드라이브 공유본 |
 
 ### 1-3. 파일이 같은지 먼저 확인 (필수)
 
 ```bash
-python -c "import hashlib;print(hashlib.sha256(open('data/chunking_data/fixed_450_70/chunks.jsonl','rb').read()).hexdigest())"
+python -c "import hashlib;print(hashlib.sha256(open('data/chunking_data/fixed_450_70/clean_chunks_450_70.jsonl','rb').read()).hexdigest())"
 ```
 
 **기대값**
 ```
-chunks.jsonl : 4cef51096632aba7ad487be6fb6fc1b293fc296d44f093462d539d6a39a1cf70
-index.faiss  : e2860671d1bfc513f2c0407d390d0e12070399be16c5cf352300b0c0d66f457a
+clean_chunks_450_70.jsonl : fbfe0b0f8cfe20212a71f6e60f84815e8db1a6b6b27232d4ae78c77954cf6fe1
+index.faiss  : a90e7d6aa461a9e8d462b544cda506bb53af379fe4b39616d72d5274db15e250
 ```
 
 다르면 코퍼스가 다른 것임. **다시 받아야 함.** 채점기가 자동으로도 잡아주지만 미리
@@ -83,7 +83,7 @@ pip list | findstr /I "rank-bm25 kiwipiepy"
   "run_name": "bm25_kiwi_k1.2_b0.75",
   "retriever": "bm25",
   "config": { "tokenizer": "kiwi", "k1": 1.2, "b": 0.75, "retrieve_k": 50 },
-  "corpus_sha256": "4cef5109...",
+  "corpus_sha256": "fbfe0b0f...",
   "items": [
     { "id": "rag_fund_01", "retrieved": ["chunk_id_1위", "chunk_id_2위", "..."] }
   ]
@@ -215,7 +215,7 @@ python scripts/eval_retriever.py --run runs/bm25_kiwi_k1.2_b0.75.json --validate
 | 메시지 | 원인 | 조치 |
 |---|---|---|
 | `평가셋 문항 N건 누락` | 157문항을 다 안 돌림 | 전체 순회 확인 |
-| `코퍼스에 없는 chunk_id` | 다른 코퍼스로 검색함 | `chunks.jsonl` 다시 받기 |
+| `코퍼스에 없는 chunk_id` | 다른 코퍼스로 검색함 | `clean_chunks_450_70.jsonl` 다시 받기 |
 | `corpus_sha256 불일치` | 코퍼스 파일이 다름 | 〃 |
 | `retrieved 안에 중복 chunk_id` | 같은 청크를 두 번 반환 | dedup 후 재실행 |
 | `retrieved 길이가 K 보다 짧음` | (경고) `retrieve_k` 가 K 보다 작음 | 50 권장 |
@@ -233,17 +233,17 @@ python scripts/eval_retriever.py --run runs/bm25_kiwi_k1.2_b0.75.json
 ```
 [근거 확보]
 세그먼트             n    USR@1    USR@3    USR@5   USR@10  CH@10-0.5  CH@10-0.8  EvHit@10
-전체               157    0.376    0.598    0.714    0.866      0.866      0.860     0.892
-src:v1              57    0.362    0.564    0.646    0.801      0.807      0.789     0.842
-src:v2_prose       100    0.384    0.618    0.754    0.903      0.900      0.900     0.920
+전체               157    0.384    0.589    0.694    0.859      0.860      0.847     0.892
+src:v1              57    0.372    0.542    0.612    0.806      0.807      0.807     0.842
+src:v2_prose       100    0.390    0.616    0.740    0.888      0.890      0.870     0.920
 type:faq             5    0.600    0.600    0.600    0.800      0.800      0.800     0.800  ※참고
 
 [순위 품질 · 진단]
 세그먼트             n   MRR@10  nDCG@10  DocHit@10  DocPrec@10     P@10
-전체               157    0.593    0.610      0.904       0.552    0.139
+전체               157    0.597    0.609      0.905       0.553    0.139
 
 [실서비스 — 2500자 예산, embedding_text 기준]
-  UnionSpanRecall@2500c = 0.739   CoverageHit@2500c-0.8 = 0.720   ChunksUsed = 5.75
+  UnionSpanRecall@2500c = 0.719   CoverageHit@2500c-0.8 = 0.694   ChunksUsed = 5.73
 ```
 
 - `※참고` 는 n<10 세그먼트. 출력은 하되 **결론 근거로 쓰지 말 것**
@@ -261,8 +261,8 @@ python scripts/eval_retriever.py --compare runs/dense_k50.json runs/bm25_k50.jso
 ```
 [전체]  n=157
   run                    USR@1   USR@3   USR@5  USR@10  CH@10-.8  MRR@10  USR@bud |  ΔUSR@10           95% CI   P(>0)
-  dense_k50              0.376   0.598   0.714   0.866     0.860   0.593    0.739 |     (기준선)
-  bm25_k50               0.212   0.450   0.591   0.728     0.694   0.412    0.604 |    -13.8p  [-21.2, -6.4]   0.000  *
+  dense_k50              0.384   0.589   0.694   0.859     0.847   0.597    0.719 |     (기준선)
+  bm25_k50               0.215   0.453   0.600   0.736     0.707   0.423    0.614 |    -12.2p  [-19.7, -4.6]   0.001  *
 
   * = 95% 신뢰구간이 0 을 포함하지 않음 (차이가 유의)
 ```
@@ -404,15 +404,15 @@ nDCG            "좋은 근거들을 전체적으로 앞에 배치했나?"
 
 | run | USR@1 | USR@3 | USR@5 | **USR@10** | CH@10-0.8 | EvHit@10 | MRR@10 | nDCG@10 | DocHit@10 | USR@2500c | latency |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `dense_k50` | 0.376 | 0.598 | 0.714 | **0.866** | 0.860 | 0.892 | 0.593 | 0.610 | 0.904 | 0.739 | 493ms |
-| `bm25_k50` | 0.212 | 0.450 | 0.591 | **0.728** | 0.694 | 0.771 | 0.412 | 0.458 | 0.854 | 0.604 | **14ms** |
+| `dense_k50` | 0.384 | 0.589 | 0.694 | **0.859** | 0.847 | 0.892 | 0.597 | 0.609 | 0.905 | 0.719 | 530ms |
+| `bm25_k50` | 0.215 | 0.453 | 0.600 | **0.736** | 0.707 | 0.790 | 0.423 | 0.464 | 0.866 | 0.614 | **13ms** |
 | 랜덤 하한 | 0.000 | 0.006 | 0.006 | 0.016 | — | 0.006 | 0.003 | — | — | — | — |
 
 자기 구현이 이 근처에서 시작하면 harness 는 정상임. **0.1 이하가 나오면** 동점 정렬
 방향이나 텍스트 필드를 잘못 썼을 가능성이 큼(2-3 참조).
 
-BM25 는 Dense 보다 `USR@10` 기준 **13.8%p 낮음** (paired bootstrap 95% CI `[-21.2, -6.4]`,
-유의함). 다만 **latency 는 14ms 대 493ms 로 35배 빠름** (Dense 는 임베딩 API 왕복 때문).
+BM25 는 Dense 보다 `USR@10` 기준 **12.2%p 낮음** (paired bootstrap 95% CI `[-19.7, -4.6]`,
+유의함). 다만 **latency 는 13ms 대 530ms 로 40배 빠름** (Dense 는 임베딩 API 왕복 때문).
 
 ### 6-5. 후보 수 saturation — Reranker 후보 정할 때 볼 것
 
@@ -426,14 +426,14 @@ python scripts/eval_retriever.py --run runs/dense_k50.json --k 10 20 30 50
 
 | 후보 수 | Dense | BM25 |
 |---|---:|---:|
-| @10 | 0.866 | 0.728 |
-| @20 | 0.922 | 0.843 |
-| @30 | 0.939 | 0.867 |
-| @50 | **0.985** | **0.907** |
+| @10 | 0.859 | 0.736 |
+| @20 | 0.921 | 0.839 |
+| @30 | 0.939 | 0.865 |
+| @50 | **0.953** | **0.906** |
 
-**⚠ 아직 saturate 되지 않았음.** Dense 는 @30 → @50 이 여전히 **+4.6%p** 오름.
-Reranker 후보를 30 에서 끊으면 그만큼을 버리는 셈이므로 **50 이상**을 고려할 것.
-(BM25 도 @30 → @50 이 +4.0%p)
+**아직 완전히 saturate 되지는 않았음.** Dense 는 @30 → @50 이 +1.4%p 로 꺾이는 조짐이
+보이나 BM25 는 +4.1%p 로 여전히 오름. Reranker 후보는 **30~50 사이**에서 각자 이득/비용을
+확인한 뒤 정할 것.
 
 즉 `Reranker 의 USR@10 ≤ 기반 리트리버의 USR@(후보 수)` 라는 천장이 후보를 늘릴수록
 계속 올라가는 상태임. 후보를 늘리면 비용·시간도 비례해 늘어나므로 **어디서 이득이
@@ -450,7 +450,7 @@ Reranker 후보를 30 에서 끊으면 그만큼을 버리는 셈이므로 **50 
 
 ### 6-4. 눈여겨볼 구간
 
-Dense 기준선에서 **`topic:bond`(0.484)와 `topic:etf`(0.462)가 유독 낮음.**
+Dense 기준선에서 **`topic:bond` 가 압도적 최약점**임 (`USR@10` 0.553, `MRR@10` 0.359).
 
 원인은 **유사 문서 중복**으로 보임. 코퍼스에 같은 주제를 설명하는 문서가 여러 개 있어,
 검색이 내용상 맞는 문단을 가져와도 정답 라벨이 지정한 문서가 아니면 0점 처리됨.

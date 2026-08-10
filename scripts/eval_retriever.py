@@ -67,7 +67,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 TESTSET = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval.json"
-CORPUS = PROJECT_ROOT / "data" / "chunking_data" / "fixed_450_70" / "chunks.jsonl"
+CORPUS = PROJECT_ROOT / "data" / "chunking_data" / "fixed_450_70" / "clean_chunks_450_70.jsonl"
 INDEX_FAISS = PROJECT_ROOT / "vectorstores" / "fixed_450_70" / "index.faiss"
 
 DEFAULT_K = [1, 3, 5, 10]
