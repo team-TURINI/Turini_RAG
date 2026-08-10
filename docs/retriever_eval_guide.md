@@ -9,13 +9,13 @@
 
 ```bash
 # 1) 검색 실행 → run 파일 생성
-python scripts/run_dense_baseline.py --fetch-k 20
+python scripts/run_dense_baseline.py          # retrieve_k=50 저장
 
 # 2) 채점
 python scripts/eval_retriever.py --run runs/dense_baseline.json
 
-# 3) 여러 방식 비교 (첫 번째가 기준선)
-python scripts/eval_retriever.py --compare runs/dense_baseline.json runs/bm25.json
+# 3) 여러 방식 비교 (첫 번째가 기준선, paired bootstrap 으로 유의성 판단)
+python scripts/eval_retriever.py --compare runs/dense_baseline.json runs/bm25_kiwi_k1.2_b0.75.json
 ```
 
 **각자 할 일은 1번뿐임.** 자기 리트리버로 검색해서 `run 파일` 만 만들면, 채점과 비교는
@@ -82,7 +82,7 @@ pip list | findstr /I "rank-bm25 kiwipiepy"
 {
   "run_name": "bm25_kiwi_k1.2_b0.75",
   "retriever": "bm25",
-  "config": { "tokenizer": "kiwi", "k1": 1.2, "b": 0.75, "fetch_k": 20 },
+  "config": { "tokenizer": "kiwi", "k1": 1.2, "b": 0.75, "retrieve_k": 50 },
   "corpus_sha256": "4cef5109...",
   "items": [
     { "id": "rag_fund_01", "retrieved": ["chunk_id_1위", "chunk_id_2위", "..."] }
@@ -91,7 +91,8 @@ pip list | findstr /I "rank-bm25 kiwipiepy"
 ```
 
 - `items` 는 **157문항 전부** 있어야 함
-- `retrieved` 는 **순위 오름차순**(1등이 맨 앞), 길이는 `fetch_k`(=20)
+- `retrieved` 는 **순위 오름차순**(1등이 맨 앞), 길이는 `retrieve_k`. **50 권장**
+  (한 번 저장해두면 @10/@20/@30/@50 을 재검색 없이 비교 가능). 최소 10
 - `run_name` 은 설정을 알아볼 수 있게. 파일명에도 쓰임
 
 ### 2-2. 참조 구현
@@ -119,7 +120,7 @@ bm25 = BM25Okapi(corpus_tokens, k1=1.2, b=0.75)
 
 scores = bm25.get_scores(tokenize(r["question"]))        # ⚠ question 원문만
 # 동점 처리: 점수 내림차순, 같으면 chunk_id 오름차순
-ranked = sorted(zip(ids, scores), key=lambda x: (-x[1], x[0]))[:FETCH_K]
+ranked = sorted(zip(ids, scores), key=lambda x: (-x[1], x[0]))[:RETRIEVE_K]   # 50
 ```
 
 > **동점 정렬 방향 주의**
@@ -132,7 +133,7 @@ ranked = sorted(zip(ids, scores), key=lambda x: (-x[1], x[0]))[:FETCH_K]
 ```python
 K_RRF = 60   # 팀 합의값으로 고정
 
-def rrf(dense_ids, bm25_ids, k=K_RRF, top=FETCH_K):
+def rrf(dense_ids, bm25_ids, k=K_RRF, top=RETRIEVE_K):   # top=50 으로 저장
     score = {}
     for rank, cid in enumerate(dense_ids, start=1):
         score[cid] = score.get(cid, 0) + 1 / (k + rank)
@@ -149,8 +150,44 @@ def rrf(dense_ids, bm25_ids, k=K_RRF, top=FETCH_K):
 
 - 입력은 **`question` + 검색된 청크 텍스트**만
 - 청크 텍스트는 코퍼스의 **`embedding_text`** 를 쓸 것 (Dense·BM25 와 동일하게)
-- **후보는 `fetch_k`=20 에서 재정렬.** top-50 에서 재정렬한 사람과는 비교 불가함
-- 재정렬 후에도 `retrieved` 길이는 20 을 유지할 것 (K=10 지표까지 계산해야 하므로)
+- 재정렬 후 `retrieved` 길이는 **10 이상** 유지 (K=10 까지 채점하므로)
+- **후보 풀 크기는 튜닝 대상임.** `retrieve_k=50` 으로 저장해두고 10/20/30/50 을 비교 → 2-7 참조
+
+### 2-7. 후보 수는 고정값이 아니라 실험 변수임
+
+역할이 단계마다 다름.
+
+| 방식 | 후보 수의 역할 | 스윕할 가치 |
+|---|---|---|
+| Dense / BM25 단독 | 몇 개를 반환할지 | **없음** — 20 이든 100 이든 top-10 이 동일해 점수가 안 변함 |
+| Hybrid | 결합에 넣을 **후보 풀** | **있음** — 풀이 바뀌면 결합 top-5 가 바뀜 |
+| Reranker | 재정렬할 **후보 풀** | **있음** — 상한과 비용이 함께 바뀜 |
+
+**Reranker 의 천장**
+
+```
+Reranker 의 UnionSpanRecall@10  ≤  기반 리트리버의 UnionSpanRecall@(후보 수)
+```
+
+후보에 없는 정답은 아무리 잘 재정렬해도 못 살림. 풀을 키우면 천장이 올라가지만
+**노이즈와 비용·시간이 비례해 증가**함. 풀 크기를 정하기 전에 기반 리트리버의
+`UnionSpanRecall@20`, `@50` 을 먼저 재보면 판단이 쉬움 (실측치는 6-5 참조).
+
+```bash
+# 후보를 넉넉히 뽑아두고 K 를 크게 줘서 천장 확인
+python scripts/run_dense_baseline.py --retrieve-k 50 --run-name dense_k50
+python scripts/eval_retriever.py --run runs/dense_k50.json --k 10 20 30 50
+```
+
+**비교할 때 두 축을 섞지 말 것**
+
+| 무엇을 비교하나 | 고정할 것 |
+|---|---|
+| 방법 비교 (Dense vs Hybrid vs Reranker) | 후보 수를 **같게** |
+| 후보 수 튜닝 | 방법을 **같게** 하고 10/20/30/50 |
+
+`retrieve_k` 와 Reranker 후보 수를 `run_name`·`config` 에 반드시 기록할 것. 기록만 되어
+있으면 값이 달라도 나중에 축을 분리해 해석할 수 있음.
 
 ### 2-6. 절대 금지
 
@@ -166,7 +203,7 @@ answer, gold_chunks, gold_start/end, span_start/end, union_gold_coverage
 ## 3. 제출 전 셀프체크
 
 ```bash
-python scripts/eval_retriever.py --run runs/bm25_kiwi.json --validate-only
+python scripts/eval_retriever.py --run runs/bm25_kiwi_k1.2_b0.75.json --validate-only
 ```
 
 ```
@@ -181,91 +218,235 @@ python scripts/eval_retriever.py --run runs/bm25_kiwi.json --validate-only
 | `코퍼스에 없는 chunk_id` | 다른 코퍼스로 검색함 | `chunks.jsonl` 다시 받기 |
 | `corpus_sha256 불일치` | 코퍼스 파일이 다름 | 〃 |
 | `retrieved 안에 중복 chunk_id` | 같은 청크를 두 번 반환 | dedup 후 재실행 |
-| `retrieved 길이가 K 보다 짧음` | (경고) `fetch_k` 가 작음 | 20 이상으로 |
+| `retrieved 길이가 K 보다 짧음` | (경고) `retrieve_k` 가 K 보다 작음 | 50 권장 |
 
 ---
 
 ## 4. 채점
 
 ```bash
-python scripts/eval_retriever.py --run runs/bm25_kiwi.json
+python scripts/eval_retriever.py --run runs/bm25_kiwi_k1.2_b0.75.json
 ```
 
-출력 예시 (Dense 기준선)
+출력은 세 블록으로 나옴. `USR` = UnionSpanRecall, `CH` = CoverageHit.
 
 ```
-세그먼트          n   Cov@1   Cov@3   Cov@5  Cov@10   Hit@5   MRR@5  nDCG@5     P@5  DocHit@5
-전체            157   0.376   0.598   0.714   0.866   0.764   0.577   0.554   0.223   0.612
-src:v1           57   0.362   0.564   0.646   0.801   0.684   0.525   0.520   0.172   0.435
-src:v2_prose    100   0.384   0.618   0.754   0.903   0.810   0.607   0.574   0.252   0.712
-type:size       121   0.375   0.595   0.720   0.868   0.777   0.590   0.552   0.243   0.673
-type:section     27   0.357   0.667   0.778   0.922   0.815   0.563   0.600   0.178   0.511
-topic:stock      71   0.388   0.601   0.748   0.899   0.789   0.603   0.572   0.245   0.741
-topic:bond       20   0.247   0.359   0.484   0.619   0.600   0.399   0.345   0.160   0.520
+[근거 확보]
+세그먼트             n    USR@1    USR@3    USR@5   USR@10  CH@10-0.5  CH@10-0.8  EvHit@10
+전체               157    0.376    0.598    0.714    0.866      0.866      0.860     0.892
+src:v1              57    0.362    0.564    0.646    0.801      0.807      0.789     0.842
+src:v2_prose       100    0.384    0.618    0.754    0.903      0.900      0.900     0.920
+type:faq             5    0.600    0.600    0.600    0.800      0.800      0.800     0.800  ※참고
+
+[순위 품질 · 진단]
+세그먼트             n   MRR@10  nDCG@10  DocHit@10  DocPrec@10     P@10
+전체               157    0.593    0.610      0.904       0.552    0.139
+
+[실서비스 — 2500자 예산, embedding_text 기준]
+  UnionSpanRecall@2500c = 0.739   CoverageHit@2500c-0.8 = 0.720   ChunksUsed = 5.75
 ```
 
-결과 JSON 은 `results_retriever/score_<run_name>.json` 에 저장됨. 문항별 점수까지 들어
-있어 나중에 실패 문항을 따로 볼 수 있음.
+- `※참고` 는 n<10 세그먼트. 출력은 하되 **결론 근거로 쓰지 말 것**
+- 결과 JSON 은 `results_retriever/score_<run_name>.json` 에 저장됨. 문항별 점수가 들어
+  있어 실패 문항을 따로 볼 수 있음
 
 ---
 
-## 5. 비교
+## 5. 비교 — paired bootstrap
 
 ```bash
-python scripts/eval_retriever.py --compare runs/dense_baseline.json runs/bm25_kiwi.json runs/hybrid_rrf.json
+python scripts/eval_retriever.py --compare runs/dense_k50.json runs/bm25_k50.json
 ```
 
 ```
-run                    Cov@1   Cov@3   Cov@5  Cov@10   Hit@5   MRR@5     P@5    ΔCov@5
-dense_baseline         0.376   0.598   0.714   0.866   0.764   0.577   0.223     +0.0p
-bm25_kiwi              ...                                                       +3.1p  ▲
-hybrid_rrf             ...                                                       +5.4p  ▲
+[전체]  n=157
+  run                    USR@1   USR@3   USR@5  USR@10  CH@10-.8  MRR@10  USR@bud |  ΔUSR@10           95% CI   P(>0)
+  dense_k50              0.376   0.598   0.714   0.866     0.860   0.593    0.739 |     (기준선)
+  bm25_k50               0.212   0.450   0.591   0.728     0.694   0.412    0.604 |    -13.8p  [-21.2, -6.4]   0.000  *
+
+  * = 95% 신뢰구간이 0 을 포함하지 않음 (차이가 유의)
 ```
 
 - **첫 번째 파일이 기준선.** Dense 를 먼저 두는 것을 권장함
-- `ΔCov@5` 는 기준선 대비 차이. **2%p 미만이면 ▲▼ 마커가 안 붙음** — 노이즈이기 때문임
-- 전체 / v1 / v2 세 구간으로 나눠서 출력됨
+- **Δ 는 문항 단위 paired bootstrap 2,000회의 95% 신뢰구간**임. 시드 고정이라 재현됨
+- **CI 가 0 을 포함하면 유의하지 않음.** "몇 %p 이상이면 의미 있다" 같은 고정 임계값을
+  쓰지 않는 이유는, `UnionSpanRecall` 이 연속값이라 문항 수만으로 노이즈 폭을 정할 수
+  없기 때문임
+- 전체 / v1 / v2 세 구간으로 나눠 출력됨. **n 이 작은 구간일수록 CI 가 넓게 나옴**
+  (실제로 v1 은 CI 가 v2 보다 훨씬 넓음)
 
 ---
 
 ## 6. 결과 읽는 법
 
-### 6-1. 지표
+### 6-1. 정답의 기준
 
-| 지표 | 뜻 | 비고 |
-|---|---|---|
-| **Coverage@K** | top-K 가 정답 구간을 덮은 **문자 비율** | **주 지표** |
-| Hit@K | top-K 에 gold 청크가 하나라도 있으면 1 | 관대함. 단독 판단 금지 |
-| MRR@K | 첫 gold 청크 순위의 역수 | 순위 품질 |
-| nDCG@K | gold_coverage 를 등급으로 쓴 nDCG | 순위 품질 |
-| Precision@K | top-K 중 gold 청크 비율 | 노이즈 |
-| DocHit@K | top-K 중 정답 문서에서 온 비율 | 문서를 맞혔나 |
+이 평가셋의 원래 정답 기준은 **원문 Gold span**(`doc_id` + `gold_start`~`gold_end`) 임.
+`gold_chunks`, `gold_coverage` 는 그 Gold 가 fixed_450 에서 어떤 청크에 걸리는지 **미리
+계산해 둔 보조정보**이며, 채점기는 이 캐시를 재사용함.
 
-> **Hit@K 만 보면 안 되는 이유** — 157문항 중 93문항이 gold 청크 2개 이상이고, 그중
-> 50문항은 청크 하나로 100% 커버가 불가능함. Hit 로만 채점하면 정답 일부만 가져와도
-> 만점이라 리트리버 간 차이가 뭉개짐.
+157문항 전부 아래가 검증되어 있음.
 
-### 6-2. 기준선 (harness 정상 여부 자가진단)
+```
+gold 청크 offset == 코퍼스 청크 offset      261/261
+overlap_chars   == 실제 교집합 길이          261/261
+gold_coverage   == overlap / gold_length     261/261
+union_gold_coverage == 합집합 / gold_length  157/157
+```
 
-| run | Cov@1 | Cov@3 | **Cov@5** | Cov@10 | Hit@5 | MRR@5 | P@5 | latency |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `dense_baseline` | 0.376 | 0.598 | **0.714** | 0.866 | 0.764 | 0.577 | 0.223 | 561ms |
-| `bm25_kiwi_k1.2_b0.75` | 0.212 | 0.450 | **0.591** | 0.728 | 0.656 | 0.398 | 0.171 | 12ms |
-| (랜덤 하한) | 0.000 | 0.006 | 0.006 | 0.016 | 0.006 | 0.003 | 0.001 | — |
+### 6-2. 지표 하나하나
 
-자기 구현이 위 수치 근처에서 시작하면 harness 는 정상임. **0.1 이하가 나오면**
-동점 정렬 방향이나 텍스트 필드를 잘못 썼을 가능성이 큼(2-3 참조).
+**1. DocHit@K — 정답 문서 자체를 찾았는지**
 
-**현재 BM25 는 Dense 보다 12.3%p 낮음.** 파라미터 튜닝과 Hybrid 결합의 출발점임.
-다만 latency 는 12ms 대 561ms 로 BM25 가 압도적임(Dense 는 임베딩 API 왕복 때문).
+top-K 안에 정답 `doc_id` 의 청크가 **하나라도 있으면 1** (binary). 같은 문서를 찾긴 했지만
+그 안에서 엉뚱한 부분을 찾았을 수도 있어 **가장 관대한 지표**임. 문서 선택 자체는
+성공했는지 진단하는 용도. **높을수록 좋음**
 
-### 6-3. 판단 기준
+**2. EvidenceHit@K — 실제 정답 근거를 하나라도 찾았는지**
+
+top-K 안에 gold 청크가 **하나라도 있으면 1**. DocHit 보다 엄격함. 다만 Gold 가 여러
+청크에 걸린 경우 그중 일부만 찾아도 1 이므로 **이것만 보면 부족함**. **높을수록 좋음**
+
+**3. UnionSpanRecall@K — 정답 근거를 실제로 얼마나 가져왔는지 (주 지표)**
+
+top-K 의 gold 청크들이 정답 원문 구간을 **몇 % 덮었는지**. 청크끼리 70자 overlap 이
+있으므로 `gold_coverage` 를 단순 합산하지 않고 **문자 구간의 합집합**으로 계산함.
+
+```
+Gold 근거 전체 = 300자
+Top5 가 합쳐서 240자를 커버
+→ UnionSpanRecall@5 = 0.80
+```
+
+1.0 이면 필요한 근거를 전부 확보한 것. EvidenceHit 과 달리 **"조금 찾음"과 "거의 다
+찾음"을 구분**할 수 있음. **높을수록 좋음**
+
+> 단순 합산이 왜 틀리냐면 — 실제로 **157문항 중 89건(57%)** 이 `gold_coverage` 를 단순
+> 합산하면 1.0 을 초과함. 겹치는 구간을 두 번 세기 때문임.
+
+**4. CoverageHit@K-0.8 — 충분한 양의 근거를 확보했는지**
+
+각 문항의 `UnionSpanRecall@K` 가 기준 이상인지 보는 binary 지표.
+
+```
+CoverageHit@10-0.8 = UnionSpanRecall@10 이 0.8 이상이면 1, 아니면 0
+```
+
+전체 문항 중 **Gold 근거의 80% 이상을 확보한 문항 비율**임. `EvidenceHit=1` 인데 실제로
+근거를 20% 만 찾은 경우를 구분할 수 있음. `0.5` 와 `0.8` 둘 다 산출하되 **0.8 을 주요
+보조 지표로 볼 것**. **높을수록 좋음**
+
+**5. MRR@10 — 첫 정답 근거를 얼마나 빨리 찾았는지**
+
+첫 gold 청크가 몇 등에 나왔는지. `1위 → 1.0`, `2위 → 0.5`, `5위 → 0.2`.
+**첫 근거의 위치에만** 관심이 있고 이후 청크는 반영 안 하므로 UnionSpanRecall 과 같이
+봐야 함. **높을수록 좋음**
+
+**6. nDCG@10 — 중요한 근거를 앞쪽에 배치했는지**
+
+MRR 보다 ranking 전체를 자세히 봄. Gold 를 많이 포함한 청크일수록 relevance 를 높게
+주므로, Gold 90% 짜리를 1위에 둔 쪽이 10% 짜리를 1위에 둔 쪽보다 높게 평가됨.
+**높을수록 좋음**
+
+**7. Precision@K / DocPrecision@K — 불필요한 청크가 얼마나 적은지**
+
+`Precision@K` 는 top-K 중 gold 청크의 비율, `DocPrecision@K` 는 정답 문서 청크의 비율.
+Gold 가 여러 overlapping chunk 로 구성될 수 있어 **핵심 지표라기보다 보조 진단용**임.
+**높을수록 좋음**
+
+**8~10. 실서비스 관점 — 2,500자 예산**
+
+| 지표 | 뜻 |
+|---|---|
+| `UnionSpanRecall@2500c` | 순위대로 청크를 넣다가 2,500자에 도달했을 때의 커버리지 |
+| `CoverageHit@2500c-0.8` | 위 값이 0.8 이상인 문항 비율 |
+| `ChunksUsed@2500c` | 예산 안에 들어간 평균 청크 수 (**진단용, 높고 낮음의 좋고 나쁨 없음**) |
+
+실제 LLM 입력 상황에 가장 가까운 지표임. 좋은 근거를 앞에 놓지 못하면 중요한 청크가
+context 밖으로 밀려 점수가 낮아짐.
+
+```
+A: USR@2500c = 0.90 / ChunksUsed = 5
+B: USR@2500c = 0.90 / ChunksUsed = 8
+→ 같은 근거량을 A 가 더 압축된 결과로 확보한 것
+```
+
+> 예산 계산은 **`embedding_text` 길이 기준**임 (Dense 인덱스도 이 필드로 만들어짐).
+
+### 6-3. 지표 관계와 우선순위
+
+```
+DocHit          "맞는 문서라도 찾았나?"
+   ↓ 더 엄격
+EvidenceHit     "실제 근거를 하나라도 찾았나?"
+   ↓ 더 자세히
+UnionSpanRecall "필요한 근거를 얼마나 가져왔나?"
+CoverageHit     "충분하다고 볼 정도(80%)까지 가져왔나?"
+MRR             "첫 근거를 얼마나 빨리 가져왔나?"
+nDCG            "좋은 근거들을 전체적으로 앞에 배치했나?"
+```
+
+항상 `DocHit >= EvidenceHit >= CoverageHit@K-0.5 >= CoverageHit@K-0.8` 이 성립함
+(채점기가 assert 로 검사함).
+
+**한 지표로 승자를 정하지 말 것.** 우선순위는 다음과 같음.
+
+| 목적 | 지표 |
+|---|---|
+| **근거 확보 능력** | `UnionSpanRecall@K` → `CoverageHit@K-0.8` → `EvidenceHit@K` |
+| **순위 품질** | `MRR@10` → `nDCG@10` |
+| **실서비스 관점** | `UnionSpanRecall@2500c` → `CoverageHit@2500c-0.8` → `ChunksUsed@2500c` |
+| **진단용** | `DocHit@K` → `Precision@K` |
+
+### 6-4. 기준선 (harness 정상 여부 자가진단)
+
+`retrieve_k=50`, 전체 157문항 기준.
+
+| run | USR@1 | USR@3 | USR@5 | **USR@10** | CH@10-0.8 | EvHit@10 | MRR@10 | nDCG@10 | DocHit@10 | USR@2500c | latency |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `dense_k50` | 0.376 | 0.598 | 0.714 | **0.866** | 0.860 | 0.892 | 0.593 | 0.610 | 0.904 | 0.739 | 493ms |
+| `bm25_k50` | 0.212 | 0.450 | 0.591 | **0.728** | 0.694 | 0.771 | 0.412 | 0.458 | 0.854 | 0.604 | **14ms** |
+| 랜덤 하한 | 0.000 | 0.006 | 0.006 | 0.016 | — | 0.006 | 0.003 | — | — | — | — |
+
+자기 구현이 이 근처에서 시작하면 harness 는 정상임. **0.1 이하가 나오면** 동점 정렬
+방향이나 텍스트 필드를 잘못 썼을 가능성이 큼(2-3 참조).
+
+BM25 는 Dense 보다 `USR@10` 기준 **13.8%p 낮음** (paired bootstrap 95% CI `[-21.2, -6.4]`,
+유의함). 다만 **latency 는 14ms 대 493ms 로 35배 빠름** (Dense 는 임베딩 API 왕복 때문).
+
+### 6-5. 후보 수 saturation — Reranker 후보 정할 때 볼 것
+
+`retrieve_k=50` 으로 한 번 저장해두면 재검색 없이 아래를 볼 수 있음.
+
+```bash
+python scripts/eval_retriever.py --run runs/dense_k50.json --k 10 20 30 50
+```
+
+**실측 결과 (UnionSpanRecall, n=157)**
+
+| 후보 수 | Dense | BM25 |
+|---|---:|---:|
+| @10 | 0.866 | 0.728 |
+| @20 | 0.922 | 0.843 |
+| @30 | 0.939 | 0.867 |
+| @50 | **0.985** | **0.907** |
+
+**⚠ 아직 saturate 되지 않았음.** Dense 는 @30 → @50 이 여전히 **+4.6%p** 오름.
+Reranker 후보를 30 에서 끊으면 그만큼을 버리는 셈이므로 **50 이상**을 고려할 것.
+(BM25 도 @30 → @50 이 +4.0%p)
+
+즉 `Reranker 의 USR@10 ≤ 기반 리트리버의 USR@(후보 수)` 라는 천장이 후보를 늘릴수록
+계속 올라가는 상태임. 후보를 늘리면 비용·시간도 비례해 늘어나므로 **어디서 이득이
+꺾이는지 각자 확인한 뒤 결정할 것.**
+
+### 6-6. 판단 기준
 
 | 기준 | 내용 |
 |---|---|
-| 노이즈 | 157문항 기준 1문항 = **0.64%p**. **2%p 미만 차이는 노이즈** |
-| 구조별 결론 | `size`(121)·`section`(27)까지만. **faq(5)·whole(4)은 결론 근거로 쓰지 말 것** |
+| 유의성 | **고정 임계값을 쓰지 않음.** `--compare` 의 paired bootstrap 95% CI 로 판단. CI 가 0 을 포함하면 유의하지 않음 |
+| 구조별 결론 | `size`(121)·`section`(27)까지만. **faq(5)·whole(4)은 참고용** |
 | topic 별 결론 | stock(71)·fund(33)·bond(20)까지. etf(13)·bank(12)는 참고용 |
+| 작은 세그먼트 | 출력은 되지만 `※참고` 표시됨. 삭제하지 않는 이유는 경향 확인용 |
 
 ### 6-4. 눈여겨볼 구간
 
@@ -290,10 +471,10 @@ Dense 기준선에서 **`topic:bond`(0.484)와 `topic:etf`(0.462)가 유독 낮�
 |---|---|---|---|
 | 1 | `text` 로 검색 (BM25) | Dense 보다 이유 없이 낮음 | `embedding_text` 를 쓰고 있나 |
 | 2 | 동점 정렬 방향 반대 | 점수가 랜덤 수준(0.01 근처) | BM25 는 `-score`, FAISS 는 `+score` |
-| 3 | `fetch_k` 를 다르게 | Reranker 결과가 비교 불가 | 전원 20 |
+| 3 | 후보 수를 기록 안 함 | 방법 차이인지 후보 풀 차이인지 구분 불가 | `run_name`·`config` 에 기록 |
 | 4 | `answer` 를 쿼리에 포함 | 점수가 비현실적으로 높음(0.95+) | 쿼리는 `question` 만 |
 | 5 | 인덱스를 직접 재빌드 | `index_sha256` 경고 | 공유본 그대로 쓸 것 |
-| 6 | 채점을 직접 구현 | 남의 수치와 1~2%p 어긋남 | `eval_retriever.py` 사용 |
+| 6 | 채점을 직접 구현 | 남의 수치와 미묘하게 어긋남 | `eval_retriever.py` 사용 |
 | 7 | run 파일 미제출 | 나중에 재채점 불가 | `runs/` 째로 공유 |
 
 > **4번은 특히 조심할 것.** 성능이 갑자기 0.95 이상 나오면 실력이 아니라 누수임.

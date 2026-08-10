@@ -33,7 +33,8 @@ def sha256(p: Path) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fetch-k", type=int, default=20, help="팀 전체 동일해야 함")
+    ap.add_argument("--retrieve-k", "--fetch-k", dest="retrieve_k", type=int, default=50,
+                    help="저장할 후보 수. 50 으로 한 번 저장해두면 @10/@20/@30/@50 을 재검색 없이 비교 가능")
     ap.add_argument("--k1", type=float, default=1.2)
     ap.add_argument("--b", type=float, default=0.75)
     ap.add_argument("--run-name", default="bm25_kiwi_k1.2_b0.75")
@@ -63,7 +64,7 @@ def main() -> None:
         scores = bm25.get_scores(tokenize(r["question"]))  # 쿼리는 question 원문만
         lat.append(time.perf_counter() - t0)
         # 동점 처리: 점수 내림차순, 같으면 chunk_id 오름차순
-        ranked = sorted(zip(ids, scores), key=lambda x: (-x[1], x[0]))[: a.fetch_k]
+        ranked = sorted(zip(ids, scores), key=lambda x: (-x[1], x[0]))[: a.retrieve_k]
         items.append({"id": r["id"], "retrieved": [cid for cid, _ in ranked]})
         if i % 50 == 0:
             print(f"  {i}/{len(testset)}")
@@ -80,7 +81,7 @@ def main() -> None:
             "rank_bm25_version": getattr(rank_bm25, "__version__", "0.2.2"),
             "k1": a.k1,
             "b": a.b,
-            "fetch_k": a.fetch_k,
+            "retrieve_k": a.retrieve_k,
             "search_text_field": "embedding_text",
             "tie_break": "score desc, chunk_id asc",
         },

@@ -8,7 +8,11 @@
 
   1. 쿼리는 question 원문만 사용 (answer/gold_* 는 채점 전용, 넣으면 데이터 누수)
   2. 검색 대상 텍스트는 embedding_text (= "제목\n\n본문"). BM25 도 동일하게 쓸 것
-  3. fetch_k 를 팀 전체가 동일하게 (기본 20)
+  3. 동점 처리 규칙 통일 (점수순, 같으면 chunk_id 오름차순)
+
+fetch_k 는 고정값이 아니라 튜닝 대상이다. 단독 리트리버에서는 20 이든 100 이든 top-10 이
+같아 점수가 안 변하지만, Hybrid/Reranker 에서는 후보 풀 크기라 결과가 바뀐다.
+값은 자유롭게 바꾸되 run_name·config 에 반드시 기록할 것.
 
 실행:
   python scripts/run_dense_baseline.py
@@ -40,8 +44,8 @@ def sha256(p: Path) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fetch-k", type=int, default=20,
-                    help="문항당 가져올 후보 수. 팀 전체 동일해야 함 (Reranker 는 이 후보에서 재정렬)")
+    ap.add_argument("--retrieve-k", "--fetch-k", dest="retrieve_k", type=int, default=50,
+                    help="저장할 후보 수. 50 으로 한 번 저장해두면 @10/@20/@30/@50 을 재검색 없이 비교 가능")
     ap.add_argument("--out", default=str(PROJECT_ROOT / "runs" / "dense_baseline.json"))
     ap.add_argument("--run-name", default="dense_baseline")
     a = ap.parse_args()
@@ -65,7 +69,7 @@ def main() -> None:
     for i, r in enumerate(testset, 1):
         t0 = time.perf_counter()
         # 쿼리는 question 원문만. answer/gold_* 는 절대 사용 금지.
-        pairs = vs.similarity_search_with_score(r["question"], k=a.fetch_k)
+        pairs = vs.similarity_search_with_score(r["question"], k=a.retrieve_k)
         lat.append(time.perf_counter() - t0)
         # 동점 처리 규칙 — 점수 동일 시 chunk_id 오름차순 (구현체별 순서 차이 제거)
         ranked = sorted(
@@ -81,7 +85,7 @@ def main() -> None:
         "retriever": "dense",
         "config": {
             "embedding_model": EMBEDDING_MODEL,
-            "fetch_k": a.fetch_k,
+            "retrieve_k": a.retrieve_k,
             "search_text_field": "embedding_text",
             "tie_break": "score asc, chunk_id asc",
         },
