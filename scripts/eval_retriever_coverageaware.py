@@ -18,9 +18,15 @@ gain으로 사용하는 coverage-aware nDCG를 공식 ranking metric으로 추�
 - DocHit@K, DocPrecision@K와 문자 예산 기반 USR도 기존 방식을 유지한다.
 - coverage_ndcg@K를 공식 ranking metric으로 추가한다.
 - 기존 nDCG는 legacy_ndcg@K로 보존하여 과거 결과와 비교할 수 있게 한다.
-- Precision@K는 계산을 유지하지만 duplicate Gold를 각각 셀 수 있으므로 diagnostic only다.
+- legacy Precision@K는 duplicate Gold를 각각 relevant hit로 세므로 동일한 근거의 반복
+  검색을 높게 평가할 수 있지만, 과거 결과 호환을 위해 기존 계산과 key를 그대로 유지한다.
+- coverage_precision@K는 이전 rank까지 확보하지 못한 canonical Gold 문자를 실제로
+  1자 이상 추가한 청크만 세며, 중복 retrieval과 context 효율 진단용으로 추가한다.
+- coverage_precision@K는 모델 선택의 primary metric이나 공식 ranking metric이 아니다.
 - Gold 판정과 검색 입력은 계속 chunk_id와 gold_chunks를 사용한다.
 - actual_start_char/actual_end_char는 provenance이며 canonical USR 좌표로 사용하지 않는다.
+
+기존 coverage_ndcg와 기존 retrieval metric의 의미와 계산식은 변경하지 않는다.
 
 coverage-aware IDCG는 동일 canonical interval을 먼저 중복 제거한 뒤 subset dynamic
 programming으로 정확하게 계산한다. unique interval이 18개를 초과하면 근사 fallback을
@@ -35,7 +41,7 @@ scripts/eval_retriever.py는 과거 실험 재현용으로 수정하지 않고 �
 
 testset 선택
 ------------
-기본값은 기존 canonical testset이다. v2는 --testset으로 명시적으로 선택한다. 상대경로는
+기본값은 기존 testset_v2이다. canonical testset(v1) --testset으로 명시적으로 선택한다. 상대경로는
 PROJECT_ROOT 기준으로 해석한다.
 
 사용법
@@ -43,30 +49,30 @@ PROJECT_ROOT 기준으로 해석한다.
 python scripts/eval_retriever_coverageaware.py --run runs/dense_baseline.json
 
 python scripts/eval_retriever_coverageaware.py \
-  --testset data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v2.json \
+  --testset data/testset/rag_testset_retriever_v1v2_fixed450_team_eval.json \
   --run runs/dense_baseline.json
 
 python scripts/eval_retriever_coverageaware.py \
-  --testset data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v2.json \
+  --testset data/testset/rag_testset_retriever_v1v2_fixed450_team_eval.json \
   --compare runs/dense_baseline.json runs/hybrid_rrf_k20_d50_b50.json
 
 python scripts/eval_retriever_coverageaware.py \
-  --testset data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v2.json \
+  --testset data/testset/rag_testset_retriever_v1v2_fixed450_team_eval.json \
   --run runs/dense_baseline.json \
   --validate-only
 
 PowerShell 실행 예시
 --------------------
 python .\scripts\eval_retriever_coverageaware.py `
-  --testset data\testset\rag_testset_retriever_v1v2_fixed450_team_eval_v2.json `
+  --testset data\testset\rag_testset_retriever_v1v2_fixed450_team_eval.json `
   --run runs\dense_baseline.json
 
 python .\scripts\eval_retriever_coverageaware.py `
-  --testset data\testset\rag_testset_retriever_v1v2_fixed450_team_eval_v2.json `
+  --testset data\testset\rag_testset_retriever_v1v2_fixed450_team_eval.json `
   --compare runs\dense_baseline.json runs\hybrid_rrf_k20_d50_b50.json
 
 python .\scripts\eval_retriever_coverageaware.py `
-  --testset data\testset\rag_testset_retriever_v1v2_fixed450_team_eval_v2.json `
+  --testset data\testset\rag_testset_retriever_v1v2_fixed450_team_eval.json `
   --run runs\dense_baseline.json `
   --validate-only
 """
@@ -96,14 +102,14 @@ DEFAULT_TESTSET = (
     PROJECT_ROOT
     / "data"
     / "testset"
-    / "rag_testset_retriever_v1v2_fixed450_team_eval.json"
+    / "rag_testset_retriever_v1v2_fixed450_team_eval_v2.json"
 )
 CORPUS = (
     PROJECT_ROOT
     / "data"
     / "chunking_data"
     / "fixed_450_70"
-    / "clean_chunks_450_70.jsonl"
+    / "clean_chunks_450_70_v2.jsonl"
 )
 INDEX_FAISS = PROJECT_ROOT / "vectorstores" / "fixed_450_70" / "index.faiss"
 
@@ -116,7 +122,7 @@ BOOTSTRAP_N = 2000
 BOOTSTRAP_SEED = 20260805
 MAX_EXACT_IDCG_INTERVALS = 18
 EVALUATOR_NAME = "eval_retriever_coverageaware"
-EVALUATOR_VERSION = "1.0"
+EVALUATOR_VERSION = "1.1"
 FLOAT_TOLERANCE = 1e-12
 
 
@@ -573,6 +579,12 @@ def score_item(
         record[f"docprec@{k}"] = round(sum(same_doc[:k]) / denominator, 6)
         # Precision@K는 duplicate Gold를 각각 세므로 diagnostic only다.
         record[f"precision@{k}"] = round(sum(is_gold[:k]) / denominator, 6)
+        gains = marginal_coverage_gains(item, top)
+        contributing = sum(1 for gain in gains if gain > FLOAT_TOLERANCE)
+        record[f"coverage_precision@{k}"] = round(
+            contributing / denominator,
+            6,
+        )
         reciprocal_rank = 0.0
         for rank, chunk_id in enumerate(top, start=1):
             if chunk_id in gold_ids:
@@ -613,6 +625,7 @@ def aggregate(
         "dochit",
         "docprec",
         "precision",
+        "coverage_precision",
         "mrr",
         "legacy_ndcg",
         "coverage_ndcg",
@@ -646,6 +659,8 @@ def build_evaluator_provenance(testset_path: Path) -> Dict[str, Any]:
         "primary_metric": "UnionSpanRecall",
         "ranking_metric": "coverage_ndcg",
         "legacy_ndcg_retained": True,
+        "coverage_precision_added": True,
+        "coverage_precision_role": "diagnostic",
         "precision_diagnostic_only": True,
         "idcg_method": "exact_subset_dp",
         "max_exact_idcg_intervals": MAX_EXACT_IDCG_INTERVALS,
@@ -814,6 +829,59 @@ def validate_coverage_ndcg_range(
             raise ValueError(f"aggregate coverage_ndcg@{k}={score} 범위 위반")
 
 
+def validate_coverage_precision_consistency(
+    result: Mapping[str, Any],
+    run: Mapping[str, Any],
+    testset: Sequence[Mapping[str, Any]],
+    k_values: Sequence[int],
+) -> None:
+    """CoveragePrecision 범위, legacy Precision 상한, gain 합과 USR를 검증한다."""
+
+    rows_by_id = {row["id"]: row for row in result["items"]}
+    retrieved_by_id = {
+        item["id"]: item.get("retrieved", [])
+        for item in run["items"]
+    }
+    for item in testset:
+        item_id = item["id"]
+        row = rows_by_id[item_id]
+        retrieved = retrieved_by_id[item_id]
+        for k in k_values:
+            coverage_precision = row[f"coverage_precision@{k}"]
+            legacy_precision = row[f"precision@{k}"]
+            if not 0.0 <= coverage_precision <= 1.0:
+                raise ValueError(
+                    f"{item_id}: coverage_precision@{k}={coverage_precision} 범위 위반"
+                )
+            if coverage_precision > legacy_precision + FLOAT_TOLERANCE:
+                raise ValueError(
+                    f"{item_id}: coverage_precision@{k}={coverage_precision} > "
+                    f"precision@{k}={legacy_precision}"
+                )
+
+            top = list(retrieved[:k])
+            gain_sum = sum(marginal_coverage_gains(item, top))
+            usr = union_span_recall(dict(item), top)
+            if not math.isclose(
+                gain_sum,
+                usr,
+                rel_tol=0.0,
+                abs_tol=FLOAT_TOLERANCE,
+            ):
+                raise ValueError(
+                    f"{item_id}: marginal gain 합과 USR@{k} 불일치: "
+                    f"gain_sum={gain_sum}, usr={usr}"
+                )
+
+    for k in k_values:
+        aggregate_score = result["metrics"][f"coverage_precision@{k}"]
+        if not 0.0 <= aggregate_score <= 1.0:
+            raise ValueError(
+                f"aggregate coverage_precision@{k}={aggregate_score} 범위 위반"
+            )
+
+
+
 # =============================================================================
 # paired bootstrap
 # =============================================================================
@@ -900,11 +968,12 @@ def print_single(result: dict, k_values: Sequence[int], budget: int) -> None:
             f"{metrics[f'coverage_ndcg@{official_k}']:>12.3f}{tag}"
         )
 
-    print("\n[진단]  LegacyNDCG와 Precision은 diagnostic only")
+    print("\n[진단]  CoveragePrecision, Legacy Precision, LegacyNDCG는 diagnostic only")
     diagnostic_header = (
         f"{'세그먼트':16s} {'n':>4s} "
         f"{'LegacyNDCG@'+str(official_k):>15s} "
-        f"{'P@'+str(official_k):>10s} "
+        f"{'CovP@'+str(official_k):>10s} "
+        f"{'LegacyP@'+str(official_k):>10s} "
         f"{'DocHit@'+str(official_k):>10s} "
         f"{'DocPrec@'+str(official_k):>10s}"
     )
@@ -915,6 +984,7 @@ def print_single(result: dict, k_values: Sequence[int], budget: int) -> None:
         print(
             f"{name:16s} {metrics['n']:>4d} "
             f"{metrics[f'legacy_ndcg@{official_k}']:>15.3f} "
+            f"{metrics[f'coverage_precision@{official_k}']:>10.3f} "
             f"{metrics[f'precision@{official_k}']:>10.3f} "
             f"{metrics[f'dochit@{official_k}']:>10.3f} "
             f"{metrics[f'docprec@{official_k}']:>10.3f}{tag}"
@@ -929,7 +999,9 @@ def print_single(result: dict, k_values: Sequence[int], budget: int) -> None:
         f"   (평균 {metrics[f'chars@{budget}c']:.0f}자)"
     )
     print("\n※ 주 지표는 UnionSpanRecall@K, 공식 순위 지표는 coverage_ndcg@K.")
-    print("※ LegacyNDCG@K와 Precision@K는 diagnostic only.")
+    print("※ CoveragePrecision = Top-K 중 새로운 canonical Gold 문자를 실제로 추가한 청크 비율.")
+    print("※ Legacy Precision = gold_chunks에 등록된 청크 비율.")
+    print("※ CoveragePrecision, Legacy Precision, LegacyNDCG는 diagnostic only.")
     print("※ Top-ranked 수치도 실제 사례 검토와 함께 해석할 것.")
 
 
@@ -1032,7 +1104,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="입력·Gold·coverage_ndcg·legacy regression만 검증하고 파일을 쓰지 않음",
+        help=(
+            "입력·Gold·coverage_ndcg·coverage_precision·regression을 검증하고 "
+            "파일을 쓰지 않음"
+        ),
     )
     parser.add_argument(
         "--testset",
@@ -1090,6 +1165,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             testset_path,
         )
         validate_coverage_ndcg_range(result, k_values)
+        validate_coverage_precision_consistency(
+            result,
+            run,
+            testset,
+            k_values,
+        )
         legacy_result = legacy_evaluator.score_run(
             run,
             testset,
@@ -1104,7 +1185,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             args.budget,
         )
         result["evaluator"]["legacy_regression_passed"] = True
-        print(f"  [ok] {label} coverage_ndcg 범위 / legacy regression 통과")
+        result["evaluator"]["coverage_precision_validation_passed"] = True
+        print(
+            f"  [ok] {label} coverage metric 정합성 / legacy regression 통과"
+        )
+
         results.append(result)
 
     if args.validate_only:
