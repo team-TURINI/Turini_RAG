@@ -15,3 +15,9 @@ runs/
 # 데이터 (공유 레포엔 올리지 않음 — README 만 추적)
 data/*
 !data/README.md
+
+# 제너레이션 실험 산출물 (답변·판정 원문 — 드라이브로 공유)
+gen_runs/
+judge_runs/
+results_gen/
+logs_*.txt

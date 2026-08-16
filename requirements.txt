@@ -3,6 +3,8 @@ python-dotenv>=1.0
 
 # LLM / Embedding
 openai>=1.30
+anthropic>=0.60          # 프로바이더 간 모델 비교용
+google-genai>=1.0          # 프로바이더 간 모델 비교용
 langchain-openai>=0.1.7
 langchain-community>=0.0.30
 langchain-core>=0.1.40
