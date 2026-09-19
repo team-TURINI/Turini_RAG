@@ -2,7 +2,8 @@
 python-dotenv>=1.0
 
 # LLM / Embedding
-openai>=1.30
+# Multi-turn Query Rewriter/Summarizer가 사용하는 Responses API structured output 기준
+openai>=2.53.0
 anthropic>=0.60          # 프로바이더 간 모델 비교용
 google-genai>=1.0          # 프로바이더 간 모델 비교용
 langchain-openai>=0.1.7
@@ -20,3 +21,6 @@ numpy>=1.24
 rank_bm25==0.2.2
 kiwipiepy==0.23.2
 cohere>=5.0            # 리랭커 (최종 파이프라인)
+
+# Multi-turn Query Rewriter / Conversation Summarizer tracing
+langsmith>=0.13.0,<0.14.0
