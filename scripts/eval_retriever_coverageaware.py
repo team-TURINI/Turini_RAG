@@ -1114,6 +1114,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=str(DEFAULT_TESTSET),
         help="평가할 testset JSON; 상대경로는 PROJECT_ROOT 기준",
     )
+    parser.add_argument(
+        "--corpus",
+        default=str(CORPUS),
+        help=(
+            "평가에 쓸 corpus JSONL; 상대경로는 PROJECT_ROOT 기준. "
+            "기본값은 정리본 v2 이며, v1 코퍼스로 만든 과거 run 을 채점할 때 지정한다"
+        ),
+    )
     args = parser.parse_args(argv)
     paths = args.compare or args.run or []
     if not paths:
@@ -1126,6 +1134,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    global CORPUS
     """입력 검증, 채점, regression, 출력 순서로 평가를 실행한다."""
 
     args = parse_args(argv)
@@ -1135,6 +1144,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     ]
     k_values = sorted(set(args.k))
     testset_path = resolve_project_path(args.testset)
+    corpus_path = resolve_project_path(args.corpus)
+    if corpus_path != CORPUS:
+        CORPUS = corpus_path
+        print(f"[corpus] override → {provenance_path(CORPUS)}")
     testset = load_testset(testset_path)
     corpus = load_corpus()
     validate_gold_annotations(testset)

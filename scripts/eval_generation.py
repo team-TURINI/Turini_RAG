@@ -51,7 +51,12 @@ from core.generator import _with_retry
 CORPUS = PROJECT_ROOT / "data" / "chunking_data" / "fixed_450_70" / "clean_chunks_450_70.jsonl"
 CTX_FIELD = "embedding_text"
 
-REFUSAL_PAT = re.compile(r"제공된\s*자료에서는?\s*해당\s*내용을\s*확인할\s*수\s*없")
+# 회피 판정은 answer_spec.py 의 정규식을 쓴다.
+# 여기 있던 정규식은 "제공된 자료에서는 **해당 내용을** 확인할 수 없습니다" 라는
+# 정확한 문구만 잡아, 모델이 문장을 바꿔 쓰면(실제로 그렇게 한다) 전부 놓쳤다.
+# 그 탓에 실측 회피율이 전 조건 0.0000 으로 나와 지표가 죽어 있었다.
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+from answer_spec import REFUSAL as REFUSAL_PAT
 # 판정 모델은 **실험 후보에 없는 모델**로 고정한다.
 # 후보(gpt-4.1-nano/mini, gpt-5.4-nano/mini)와 같은 모델로 채점하면 자기 답변을
 # 자기가 채점하게 되어 자기선호 편향이 든다. gpt-4.1(표준)은 후보에서 빠졌으므로 여기 쓴다.

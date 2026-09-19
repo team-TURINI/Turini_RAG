@@ -100,6 +100,27 @@ def numbers_without_unit(answer: str) -> list[str]:
     return out
 
 
+# 프롬프트가 제시한 **예시 문구**를 모델이 토씨 하나 안 바꾸고 그대로 쓰는지 본다.
+#
+#   GPT-4.1 프롬프팅 가이드 실패 모드:
+#     "When provided sample phrases, models can use those quotes verbatim and
+#      start to sound repetitive to users. Ensure you instruct the model to vary
+#      them as necessary."
+#
+#   v2·v3 는 위험고지+권유아님을 한 문장 예시로 제시한다. 그 문장이 157문항에
+#   똑같이 붙으면 준수율은 만점인데 답변은 기계적으로 읽힌다. 준수 여부와
+#   **별개로** 세야 하므로 규칙(_ok)이 아니라 관측값으로 둔다.
+SAMPLE_PHRASES = (
+    "원금 손실이 발생할 수 있으므로 유의하시기 바라며, "
+    "본 안내는 투자 권유가 아닌 정보 제공입니다.",
+)
+
+
+def _sample_phrase_verbatim(answer: str) -> bool:
+    a = _norm(answer)
+    return any(_norm(s) in a for s in SAMPLE_PHRASES)
+
+
 def check(answer: str) -> Dict[str, object]:
     """스펙 준수 여부. 해당 없는 항목은 None (준수율 계산에서 제외)."""
     a = answer or ""
@@ -130,6 +151,8 @@ def check(answer: str) -> Dict[str, object]:
     r["no_label_ok"] = not LABEL_CITE.search(a)
     r["is_refusal"] = is_refusal
     r["chars"] = n
+    # 준수율(compliance)에는 넣지 않는다 — 규칙 위반이 아니라 다양성 관측값이다.
+    r["sample_verbatim"] = _sample_phrase_verbatim(a)
 
     checks = [v for k, v in r.items() if k.endswith("_ok") and v is not None]
     r["compliance"] = round(sum(checks) / len(checks), 4) if checks else None

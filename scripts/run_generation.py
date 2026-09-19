@@ -69,6 +69,9 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="앞 N문항만 (파일럿용)")
     ap.add_argument("--model", default=None)
     ap.add_argument("--prompt-version", default="v1")
+    ap.add_argument("--instruction-placement", choices=["front", "sandwich"], default="front",
+                    help="sandwich = 컨텍스트 뒤에 핵심 규칙을 재기재 "
+                         "(GPT-4.1 가이드: 장문맥에서는 지시를 앞뒤 양쪽에 두는 편이 낫다)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--corpus", default=str(CORPUS), help="코퍼스 경로 override")
     ap.add_argument("--testset", default=str(TESTSET), help="평가셋 경로 override")
@@ -100,6 +103,16 @@ def main() -> None:
     else:
         run = json.loads(Path(a.run).read_text(encoding="utf-8"))
         items = run["items"]
+        # 검색 run 파일에는 dev/holdout 표시가 없다. 분할 맵을 붙여 --split 이 듣게 한다.
+        # (스윕은 dev 에서만 하고 holdout 은 최종 1회만 보기 위한 장치)
+        smap_path = PROJECT_ROOT / "data" / "gen_contexts" / "split.json"
+        if smap_path.exists():
+            smap = json.loads(smap_path.read_text(encoding="utf-8"))["split"]
+            items = [dict(it, split=smap.get(it["id"])) for it in items]
+        elif a.split != "all":
+            raise SystemExit(f"[fatal] --split 을 쓰려면 {smap_path} 가 필요합니다")
+        if a.split != "all":
+            items = [it for it in items if it.get("split") == a.split]
         mode = f"budget={budget}자" if budget else f"top_k={a.top_k}"
 
     items = items[: a.limit] if a.limit else items
@@ -111,7 +124,8 @@ def main() -> None:
     for n, it in enumerate(items, start=1):
         q = testset[it["id"]]["question"]
         ctx = build_context(it["retrieved"], corpus, a.top_k, budget)
-        res = generate(q, ctx, prompt_version=a.prompt_version, model=model)
+        res = generate(q, ctx, prompt_version=a.prompt_version,
+                       placement=a.instruction_placement, model=model)
         lat.append(res.latency); tin.append(res.input_tokens); tout.append(res.output_tokens)
         trunc += int(res.truncated)
         out_items.append({
@@ -140,6 +154,11 @@ def main() -> None:
         "retriever_config": run.get("config"),
         "generation_config": {
             "model": model, "prompt_version": a.prompt_version,
+            "instruction_placement": a.instruction_placement,
+            # 어떤 데이터로 돌렸는지 결과 파일만 보고 알 수 있어야 한다.
+            # (기본값이 v1 평가셋이라, v2 를 쓰고도 기록이 없으면 나중에 구분이 안 된다)
+            "corpus": str(CORPUS.name), "testset": str(TESTSET.name),
+            "split": a.split,
             "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS, "top_p": TOP_P,
             "context_mode": mode, "context_text_field": CTX_FIELD,
         },
