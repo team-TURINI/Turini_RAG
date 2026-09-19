@@ -15,10 +15,12 @@ RAG 베이스라인의 생성 구성요소. 리트리버가 가져온 문서를 
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from openai import OpenAI
 
@@ -521,10 +523,57 @@ PROMPT_PRESETS = {
 }
 
 
+@dataclass(frozen=True)
+class PortfolioPromptProfile:
+    """기존 일반 RAG preset 위에 portfolio 규칙을 합성하는 profile."""
+
+    base_preset: str
+
+
+# V2_P는 일반 prompt의 복사본이 아니다. 향후 일반 기준 prompt가 바뀌면 이 연결만
+# 교체하고 아래 portfolio 전용 규칙과 user-message 조립 로직은 그대로 재사용한다.
+PORTFOLIO_PROMPT_PROFILES = {
+    "v2_p": PortfolioPromptProfile(base_preset="v2_4"),
+}
+
+PORTFOLIO_RULES = """# 사용자 포트폴리오 추가 규칙
+V2_P에서는 위 일반 규칙 중 "[금융상품 자료]에 있는 내용만 사용할 것"이라는 근거 규칙을
+다음과 같이 범위를 나누어 적용합니다.
+- 일반 금융 사실은 [금융상품 자료]에 명시된 내용만 사용하십시오.
+- 사용자 본인의 자산, 비중, 금액 및 진단 정보는 [사용자 포트폴리오]에 명시된 내용만 사용하십시오.
+- 두 영역에 없는 내용은 사용하거나 추측하지 마십시오.
+- 두 영역의 사실을 혼동하거나 한 영역의 사실을 다른 영역에서 얻은 것처럼 쓰지 마십시오.
+- 사용자 포트폴리오에 없는 자산, 종목, 비중, 금액, 위험성향, 투자경험을 추측하지 마십시오.
+- 비중이 0으로 명시된 자산은 보유 중이라고 해석하지 마십시오.
+- 자료가 없는 개인 사실을 만들어내지 말고, 개인화 분석은 제공된 두 자료의 교차 설명까지만 하십시오.
+- 확정적인 투자 지시나 매수·매도 권유를 하지 마십시오."""
+
+PORTFOLIO_CHECK = """# 포트폴리오 출력 전 확인
+최종 답변을 내기 전 질문에 직접 답했는지, 일반 금융 사실은 [금융상품 자료]에 있는지,
+사용자 관련 사실은 [사용자 포트폴리오]에 실제로 있는지, 없는 종목·금액·비중·성향을
+만들지 않았는지, base prompt의 출력 규칙을 지켰는지 확인하세요.
+점검 과정은 쓰지 말고 답변만 출력하세요."""
+
+
 def resolve_preset(name: str) -> tuple[str, str]:
     if name not in PROMPT_PRESETS:
         raise KeyError(f"없는 프리셋: {name} (가능: {sorted(PROMPT_PRESETS)})")
     return PROMPT_PRESETS[name]
+
+
+def get_portfolio_profile(name: str) -> PortfolioPromptProfile:
+    if name not in PORTFOLIO_PROMPT_PROFILES:
+        raise KeyError(
+            f"없는 portfolio profile: {name} "
+            f"(가능: {sorted(PORTFOLIO_PROMPT_PROFILES)})"
+        )
+    return PORTFOLIO_PROMPT_PROFILES[name]
+
+
+def resolve_portfolio_profile(name: str) -> tuple[str, str]:
+    """Portfolio profile이 참조하는 일반 RAG preset을 현재 시점에 해석한다."""
+
+    return resolve_preset(get_portfolio_profile(name).base_preset)
 
 
 def get_user_template(placement: str) -> str:
@@ -734,6 +783,56 @@ def build_messages(question: str, contexts: list[str],
     ]
 
 
+def serialize_portfolio_context(portfolio_context: dict[str, Any]) -> str:
+    """추론이나 값 변환 없이 portfolio 원본을 안정적인 JSON 문자열로 만든다."""
+
+    if not isinstance(portfolio_context, dict):
+        raise TypeError("portfolio_context는 dict여야 합니다.")
+    return json.dumps(
+        portfolio_context,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
+    )
+
+
+def build_portfolio_messages(
+    question: str,
+    contexts: list[str],
+    portfolio_context: dict[str, Any],
+    *,
+    profile: str = "v2_p",
+) -> list[dict]:
+    """일반 RAG preset에 portfolio 전용 규칙과 source 영역을 합성한다."""
+
+    prompt_version, placement = resolve_portfolio_profile(profile)
+    system_prompt = f"{get_prompt(prompt_version).rstrip()}\n\n{PORTFOLIO_RULES}"
+    base_user_prompt = get_user_template(placement).format(
+        retrieved_context=format_contexts(contexts).strip(),
+        user_question=question.strip(),
+    )
+    question_marker = "# 사용자 질문"
+    if question_marker not in base_user_prompt:
+        raise ValueError(
+            f"base preset {get_portfolio_profile(profile).base_preset!r}의 user template에 "
+            f"{question_marker!r} 영역이 없습니다."
+        )
+    portfolio_block = (
+        "# 사용자 포트폴리오\n"
+        f"{serialize_portfolio_context(portfolio_context)}\n\n"
+    )
+    user_prompt = base_user_prompt.replace(
+        question_marker,
+        f"{portfolio_block}{question_marker}",
+        1,
+    )
+    user_prompt = f"{user_prompt.rstrip()}\n\n{PORTFOLIO_CHECK}"
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 MAX_RETRY = 6
 
 
@@ -786,14 +885,33 @@ def generate(question: str, contexts: list[str], *,
         return _with_retry(_generate_google, question, contexts, prompt_version, m, temp, mt, tp)
 
     messages = build_messages(question, contexts, prompt_version, placement)
+    return _generate_openai_messages(messages, m, temp, mt, tp)
+
+
+def _generate_openai_messages(
+    messages: list[dict],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    top_p: float,
+) -> GenerationResult:
+    """일반/V2_P가 공유하는 OpenAI Chat Completions 호출 경로."""
+
     client = _get_client()
-
-    kwargs = {"temperature": temp, "top_p": tp, _token_limit_param(m): mt}
-
+    kwargs = {
+        "temperature": temperature,
+        "top_p": top_p,
+        _token_limit_param(model): max_tokens,
+    }
     start = time.time()
-    resp = _with_retry(lambda: client.chat.completions.create(model=m, messages=messages, **kwargs))
+    resp = _with_retry(
+        lambda: client.chat.completions.create(
+            model=model,
+            messages=messages,
+            **kwargs,
+        )
+    )
     latency = time.time() - start
-
     choice = resp.choices[0]
     return GenerationResult(
         answer=choice.message.content,
@@ -802,6 +920,34 @@ def generate(question: str, contexts: list[str], *,
         output_tokens=resp.usage.completion_tokens,
         finish_reason=choice.finish_reason or "stop",
     )
+
+
+def generate_portfolio_aware(
+    question: str,
+    contexts: list[str],
+    portfolio_context: dict[str, Any],
+    *,
+    profile: str = "v2_p",
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    top_p: float | None = None,
+) -> GenerationResult:
+    """원 질문, 검색 자료, 신뢰 가능한 portfolio를 분리해 V2_P 답변을 생성한다."""
+
+    m = model or MODEL
+    if _provider(m) != "openai":
+        raise ValueError("V2_P runtime은 현재 OpenAI 생성 모델만 지원합니다.")
+    temp = TEMPERATURE if temperature is None else temperature
+    tp = TOP_P if top_p is None else top_p
+    mt = max_tokens or MAX_TOKENS
+    messages = build_portfolio_messages(
+        question,
+        contexts,
+        portfolio_context,
+        profile=profile,
+    )
+    return _generate_openai_messages(messages, m, temp, mt, tp)
 
 
 def generate_answer(question: str, contexts: list[str]) -> str:
