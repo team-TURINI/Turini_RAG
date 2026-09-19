@@ -102,7 +102,9 @@ TOP_P = 0.9
 #     이미 잘라둔 코퍼스를 그대로 쓴다. 재청킹하지 않는다.
 FINAL_CORPUS = PROJECT_ROOT / "data" / "chunking_data" / "fixed_450_70" / "clean_chunks_450_70_v2.jsonl"
 FINAL_INDEX_DIR = PROJECT_ROOT / "vectorstores" / "fixed_450_70_v2"      # FAISS (text-embedding-3-large)
-FINAL_TESTSET = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v2.json"
+FINAL_TESTSET = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v3.json"
+FINAL_TESTSET_V2 = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v2.json"  # 관할 라벨 이전
+FINAL_TESTSET_RET = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v3_retrieval.json"  # 검색 채점용 152
 FINAL_SPLIT = PROJECT_ROOT / "data" / "gen_contexts" / "split.json"      # dev 107 / holdout 50
 
 # ── ② Retriever — Dense + BM25, RRF 로 결합 (가중치 5:5 = unweighted)
@@ -123,6 +125,10 @@ FINAL_CANDIDATE_K = 20                   # Hybrid 상위 20개만 리랭커에 �
 
 # ── ④ Generator 에 넘길 컨텍스트
 FINAL_TOP_K_GEN = 3                      # 리랭커 재정렬 Top3
+
+# 관할(국가) 필터 — core/jurisdiction.py. 국가 언급 없는 질문은 KR 기준, US 문서 제외 (2026-09-19)
+FINAL_JURISDICTION_FILTER = True
+JURISDICTION_PATH = PROJECT_ROOT / "data" / "jurisdiction.json"   # scripts/label_jurisdiction.py 산출
 FINAL_CTX_FIELD = "embedding_text"       # 제목 + 본문
 
 # ── ⑤ 프롬프트 — V2_4 (v2 시스템 프롬프트 + 질문 뒤 "출력 전 확인" 블록)

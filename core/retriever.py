@@ -81,8 +81,13 @@ class DenseIndexRetriever:
         from core.vectorstore import load_faiss_from_dir
         self._vs = load_faiss_from_dir(index_dir)
 
-    def search(self, query: str, k: int) -> List[str]:
-        pairs = self._vs.similarity_search_with_score(query, k=k)
+    def search(self, query: str, k: int, metadata_filter=None) -> List[str]:
+        """metadata_filter: LangChain FAISS `filter=` 콜백(metadata → bool). None 이면 기존과 동일.
+        필터가 있으면 fetch_k 를 넉넉히 잡아 걸러낸 뒤에도 k 개가 남게 한다 (US 청크 25%)."""
+        if metadata_filter is None:
+            pairs = self._vs.similarity_search_with_score(query, k=k)
+        else:
+            pairs = self._vs.similarity_search_with_score(query, k=k, filter=metadata_filter, fetch_k=k * 4)
         ranked = sorted(((d.metadata.get("chunk_id"), float(s)) for d, s in pairs),
                         key=lambda x: (x[1], x[0]))
         return [cid for cid, _ in ranked]
@@ -112,9 +117,11 @@ class BM25Retriever:
     def tokenize(self, text: str) -> List[str]:
         return [t.form for t in self._kiwi.tokenize(text) if t.tag in self.NOUN_TAGS]
 
-    def search(self, query: str, k: int) -> List[str]:
+    def search(self, query: str, k: int, chunk_ok=None) -> List[str]:
+        """chunk_ok: chunk_id → bool. IDF 는 전체 코퍼스 기준 그대로(튜닝값 유지), 순위에서만 거른다."""
         scores = self._bm25.get_scores(self.tokenize(query))
-        ranked = sorted(zip(self._ids, scores), key=lambda x: (-x[1], x[0]))[:k]
+        pairs = zip(self._ids, scores) if chunk_ok is None else             ((c, s) for c, s in zip(self._ids, scores) if chunk_ok(c))
+        ranked = sorted(pairs, key=lambda x: (-x[1], x[0]))[:k]
         return [cid for cid, _ in ranked]
 
 
@@ -146,9 +153,15 @@ class HybridRetriever:
         self.rrf_k, self.w_dense, self.w_bm25 = rrf_k, w_dense, w_bm25
         self.pool, self.out_k = pool, out_k
 
-    def search(self, query: str) -> Dict[str, List[str]]:
-        d = self.dense.search(query, self.dense_k)
-        b = self.bm25.search(query, self.bm25_k)
+    def search(self, query: str, *, jmap=None, allowed=None) -> Dict[str, List[str]]:
+        """jmap: core.jurisdiction.JurisdictionMap, allowed: 허용 라벨 집합(None = 필터 없음).
+        필터는 **RRF·리랭커 앞** 에서 건다 — 리랭커는 의미 유사도만 보므로 관할을 못 가린다."""
+        if jmap is None or allowed is None:
+            d = self.dense.search(query, self.dense_k)
+            b = self.bm25.search(query, self.bm25_k)
+        else:
+            d = self.dense.search(query, self.dense_k, metadata_filter=jmap.metadata_filter(allowed))
+            b = self.bm25.search(query, self.bm25_k, chunk_ok=jmap.chunk_ok(allowed))
         h = rrf(d, b, k=self.rrf_k, wd=self.w_dense, wb=self.w_bm25,
                 pool=self.pool, out_k=self.out_k)
         return {"dense": d, "bm25": b, "hybrid": h}

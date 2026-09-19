@@ -29,14 +29,16 @@ RAG_baseline/
 파이프라인 흐름: `질문 → FAISS 검색(top RETRIEVE_K) → 상위 TOP_K_GEN 문서로 LLM 답변`
 인덱싱 흐름: `raw/ → docs.jsonl → [CHUNK_SIZE 로 자르기] → FAISS`
 
-## 최종 파이프라인 실행 (2026-09-19 확정)
+## 최종 파이프라인 실행 (2026-09-19 확정, 같은 날 국가 필터 추가)
 
 ```
-질문 → Dense 50 + BM25(noun/1.2/0.75) 50 → RRF k=20 → Cohere c20 재정렬 → Top3 → gpt-4.1-mini (V2_4)
+질문 → [국가 판별: 기본 KR] → [KR·GLOBAL 문서만] Dense 50 + BM25(noun/1.2/0.75) 50 → RRF k=20 → Cohere c20 → Top3 → gpt-4.1-mini (V2_4j)
 ```
 
-전 파라미터는 `config.py` 의 **`FINAL_*` 섹션** 하나에 있고, 근거는 `docs/final_pipeline_spec.md` 에 있다.
-실행 코드는 `core/pipeline.py` 의 `FinalPipeline`.
+전 파라미터는 `config.py` 의 **`FINAL_*` 섹션** 하나에 있고, 근거는 `docs/final_pipeline_spec.md` 와
+`docs/jurisdiction_report.md`(국가 필터) 에 있다. 실행 코드는 `core/pipeline.py` 의 `FinalPipeline`.
+국가 필터는 코퍼스에 섞인 미국 자료(SEC·FRED·yfinance)가 한국 사용자 질문에 쓰이지 않게 **리랭커 앞**에서 거른다
+(`core/jurisdiction.py`). 끄려면 `FINAL_JURISDICTION_FILTER = False`.
 
 ### 1. 설치
 
@@ -52,8 +54,10 @@ cp .env.example .env      # OPENAI_API_KEY, COHERE_API_KEY 둘 다 입력
 |---|---|
 | `data/chunking_data/fixed_450_70/clean_chunks_450_70_v2.jsonl` | 정리본 코퍼스 (1,698청크) |
 | `vectorstores/fixed_450_70_v2/` | FAISS 인덱스 (`index.faiss` + `index.pkl`) |
-| `data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v2.json` | 평가셋 v2 (157문항) |
+| `data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v3.json` | 평가셋 v3 (157문항, 국가 라벨·재라벨 반영) |
+| `data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v3_retrieval.json` | 검색 채점용 155문항 (회피 정답 2문항 제외) |
 | `data/gen_contexts/split.json` | dev 107 / holdout 50 분할 |
+| `data/jurisdiction.json` | 문서별 국가 라벨 — `python scripts/label_jurisdiction.py` 로 직접 생성 가능 (`data/docs_metadata_cleaned.jsonl` 필요) |
 
 없으면 `run_pipeline.py` 가 어느 파일이 없는지 알려주고 멈춘다.
 
@@ -89,11 +93,16 @@ generation.json     답변 — 판정기·answer_spec 호환
 
 ```bash
 C2=data/chunking_data/fixed_450_70/clean_chunks_450_70_v2.jsonl
-TS=data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v2.json
+TS=data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v3.json
+TSR=data/testset/rag_testset_retriever_v1v2_fixed450_team_eval_v3_retrieval.json
 R=results_e2e/my_run
 
-# 검색 — USR · CovnDCG · MRR (무료)
-python scripts/eval_retriever_coverageaware.py --run $R/ret_reranked.json --corpus $C2 --testset $TS
+# 검색 — 회피 정답 문항을 뺀 run 파일을 만든 뒤 USR · CovnDCG · MRR (무료)
+python scripts/eval_jurisdiction.py --filter-run $R/ret_reranked.json          # → ret_reranked_r155.json
+python scripts/eval_retriever_coverageaware.py --run $R/ret_reranked_r155.json --corpus $C2 --testset $TSR
+
+# 국가 — 미국 청크 누출 · 답변 내 미국 용어 · 회피 (무료)
+python scripts/eval_jurisdiction.py --run $R/ret_reranked.json --gen $R/generation.json
 
 # 생성 — correctness · completeness · faithfulness (gpt-4.1 판정, 자료/모범답안 정보 차단)
 python scripts/run_judge.py --run $R/generation.json --corpus $C2 --testset $TS --out $R
@@ -112,6 +121,7 @@ python scripts/eval_rag_triad.py --gen $R/generation.json --corpus $C2 \
 | 근거성 | faithfulness (규정 고지 문구는 판정 제외) | `run_judge.py` |
 | 관련성 | answer_relevance · context_relevance | `eval_rag_triad.py` |
 | 규정 준수 | 준수율 7종 · sample_verbatim | `answer_spec.py` |
+| 국가 | JP@k · US 누출 · 미국 용어 · 회피 | `eval_jurisdiction.py` |
 
 ### 5. 한 문항만 돌려보기
 

@@ -73,9 +73,18 @@ from core.retriever import BM25Retriever, DenseIndexRetriever, HybridRetriever, 
 class FinalPipeline:
     """확정 사양 RAG 파이프라인. 무거운 것(인덱스·BM25·클라이언트)은 생성 시 한 번만 로드."""
 
-    def __init__(self, *, prompt_preset: str = "v2_4", verbose: bool = True) -> None:
+    def __init__(self, *, prompt_preset: str = "v2_4j", verbose: bool = True,
+                 jurisdiction_filter: bool = None) -> None:
         t0 = _time.time()
         self.corpus = load_corpus(_cfg.FINAL_CORPUS)
+        # 관할 필터 — config.FINAL_JURISDICTION_FILTER 가 기본. False 면 2026-09-19 이전과 동일 동작
+        self.jfilter = _cfg.FINAL_JURISDICTION_FILTER if jurisdiction_filter is None else jurisdiction_filter
+        self.jmap = None
+        if self.jfilter:
+            from core.jurisdiction import JurisdictionMap
+            self.jmap = JurisdictionMap()
+            if verbose:
+                print(f"[load] 관할 라벨 {self.jmap.version} 청크 {self.jmap.counts}")
         if verbose:
             print(f"[load] 코퍼스 {len(self.corpus)}청크")
         dense = DenseIndexRetriever(_cfg.FINAL_INDEX_DIR)
@@ -112,9 +121,18 @@ class FinalPipeline:
             out.append(text)
         return out
 
-    def retrieve(self, question: str) -> Dict[str, List[str]]:
-        """생성 없이 검색·리랭킹까지만. 회귀 대조와 검색 지표 계산에 쓴다."""
-        r = self.retriever.search(question)
+    def retrieve(self, question: str) -> Dict[str, Any]:
+        """생성 없이 검색·리랭킹까지만. 회귀 대조와 검색 지표 계산에 쓴다.
+        관할 필터가 켜져 있으면 질문 관할을 판별해 Dense·BM25 단계에서 거른다 (리랭커 앞)."""
+        if self.jfilter:
+            from core.jurisdiction import detect
+            j = detect(question)
+            r = self.retriever.search(question, jmap=self.jmap, allowed=j["allowed"])
+            r["jurisdiction"] = j["jurisdiction"]
+            r["allowed"] = sorted(j["allowed"]) if j["allowed"] else None
+            r["signals"] = {"us": j["signals_us"], "kr": j["signals_kr"]}
+        else:
+            r = self.retriever.search(question)
         r["reranked"] = self.reranker.rerank(question, r["hybrid"], self.corpus)
         return r
 
@@ -129,6 +147,8 @@ class FinalPipeline:
             "context_chunk_ids": ctx_ids,
             "retrieval_latency_s": round(t_ret, 3),
         }
+        if self.jfilter:
+            out.update({"jurisdiction": r["jurisdiction"], "allowed": r["allowed"], "signals": r["signals"]})
         if skip_generation:
             return out
         contexts = self.build_context(r["reranked"])
@@ -162,6 +182,8 @@ class FinalPipeline:
             "reranker": {"provider": _cfg.FINAL_RERANK_PROVIDER, "model": _cfg.FINAL_RERANK_MODEL,
                          "candidate_k": _cfg.FINAL_CANDIDATE_K},
             "top_k_gen": _cfg.FINAL_TOP_K_GEN, "ctx_field": _cfg.FINAL_CTX_FIELD,
+            "jurisdiction": {"filter": self.jfilter, "labels_version": self.jmap.version if self.jmap else None,
+                             "default": "KR", "policy": "KR→{KR,GLOBAL} / US→필터 없음"},
             "prompt": {"preset": self.prompt_preset, "version": self.prompt_version, "placement": self.placement},
             "generation": {"model": _cfg.FINAL_MODEL, "temperature": _cfg.FINAL_TEMPERATURE,
                            "top_p": _cfg.FINAL_TOP_P, "max_tokens": _cfg.FINAL_MAX_TOKENS},
