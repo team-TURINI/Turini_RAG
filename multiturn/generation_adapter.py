@@ -18,7 +18,7 @@ class MultiTurnGeneratorAdapter:
     def __init__(
         self,
         *,
-        general_prompt_preset: str = "v2_4",
+        general_prompt_preset: str = "v2_4j",   # 국가 기준 절 포함 (2026-09-20)
         portfolio_profile: str = "v2_p",
         general_generate: GeneralGenerate = generate,
         portfolio_generate: PortfolioGenerate = generate_portfolio_aware,

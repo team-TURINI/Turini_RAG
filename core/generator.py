@@ -547,7 +547,7 @@ class PortfolioPromptProfile:
 # V2_P는 일반 prompt의 복사본이 아니다. 향후 일반 기준 prompt가 바뀌면 이 연결만
 # 교체하고 아래 portfolio 전용 규칙과 user-message 조립 로직은 그대로 재사용한다.
 PORTFOLIO_PROMPT_PROFILES = {
-    "v2_p": PortfolioPromptProfile(base_preset="v2_4"),
+    "v2_p": PortfolioPromptProfile(base_preset="v2_4j"),   # 국가 기준 절 포함 (2026-09-20)
 }
 
 PORTFOLIO_RULES = """# 사용자 포트폴리오 추가 규칙

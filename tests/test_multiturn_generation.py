@@ -88,14 +88,14 @@ def build_orchestrator(result: QueryRewriteResult):
 
 
 class MultiTurnGenerationTest(unittest.TestCase):
-    def test_general_question_uses_v2_4_without_portfolio(self) -> None:
+    def test_general_question_uses_v2_4j_without_portfolio(self) -> None:
         orchestrator, pipeline, calls = build_orchestrator(rewrite())
         state = ConversationState(portfolio_context={"secret": "must-not-pass"})
 
         result = orchestrator.generate_turn("현재 질문", state)
 
         self.assertEqual(result.generation_status, "generated")
-        self.assertEqual(result.generation_profile, "v2_4")
+        self.assertEqual(result.generation_profile, "v2_4j")
         self.assertEqual(pipeline.retrieve_calls, [result.rewrite_result.retrieval_query])
         self.assertEqual(len(calls.general_calls), 1)
         self.assertEqual(calls.portfolio_calls, [])

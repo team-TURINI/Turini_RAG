@@ -50,10 +50,11 @@ class PortfolioGeneratorTest(unittest.TestCase):
         self.assertEqual(generator.resolve_preset("v1"), ("v1", "front"))
         self.assertEqual(generator.resolve_preset("v2"), ("v2", "front"))
         self.assertEqual(generator.resolve_preset("v2_4"), ("v2", "check"))
-        self.assertEqual(generator.resolve_portfolio_profile("v2_p"), ("v2", "check"))
+        self.assertEqual(generator.resolve_preset("v2_4j"), ("v2j", "check"))
+        self.assertEqual(generator.resolve_portfolio_profile("v2_p"), ("v2j", "check"))
         self.assertEqual(
             generator.get_portfolio_profile("v2_p").base_preset,
-            "v2_4",
+            "v2_4j",
         )
         self.assertNotIn("v2_p", generator.PROMPTS)
 
@@ -65,7 +66,7 @@ class PortfolioGeneratorTest(unittest.TestCase):
         )
 
         system = messages[0]["content"]
-        self.assertTrue(system.startswith(generator.get_prompt("v2")))
+        self.assertTrue(system.startswith(generator.get_prompt("v2j")))
         self.assertEqual(system.count(generator.PORTFOLIO_RULES), 1)
         self.assertIn(
             "일반 금융 사실은 [금융상품 자료]에 명시된 내용만 사용",
