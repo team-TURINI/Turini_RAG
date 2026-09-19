@@ -105,6 +105,82 @@ class PortfolioGeneratorTest(unittest.TestCase):
         )
         self.assertEqual(generator.resolve_preset("v2_4"), ("v2", "check"))
 
+    def test_v2_p_forbids_cross_field_causality_and_suitability_inference(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        self.assertIn("서로 다른 필드 사이의", rules)
+        self.assertIn("인과관계, 사용자의 의도, 적합성 또는 위험 적절성", rules)
+        self.assertIn("자료에 명시되지 않았다면 추론하지 마십시오", rules)
+        self.assertIn('"안정형에 맞춰 현금 비중을 높였다"고 말하지 마십시오', rules)
+
+    def test_v2_p_uses_only_portfolio_facts_directly_relevant_to_question(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        self.assertIn("# 답변 전략", rules)
+        self.assertIn("질문에 직접 필요한 portfolio 사실만 사용", rules)
+        self.assertIn("사용자 포트폴리오의 모든 정보를 나열할 필요가 없습니다", rules)
+        self.assertIn("질문과 [금융상품 자료]에 직접 관련된 field만 사용", rules)
+
+    def test_v2_p_forbids_unsupported_other_asset_effects(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        self.assertIn("특정 자산군의 영향만 설명한다면", rules)
+        self.assertIn(
+            "자료에 없는 다른 자산군의 위험이나 영향을 모델 지식으로 추가하지 마십시오",
+            rules,
+        )
+        self.assertIn("질문에 직접 필요한 portfolio 사실만 사용", rules)
+
+    def test_v2_p_requires_evidence_for_relative_judgments(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        for expression in (
+            '"높다"',
+            '"낮다"',
+            '"적절하다"',
+            '"위험하다"',
+            '"안정적이다"',
+            '"공격적이다"',
+            '"성향에 맞다"',
+            '"더 위험하다"',
+            '"더 영향을 받는다"',
+            '"노출되어 있다"',
+            '"신중한 접근이 필요하다"',
+        ):
+            self.assertIn(expression, rules)
+        self.assertIn("[금융상품 자료]에 해당 판단 근거가 있을 때만 사용", rules)
+
+    def test_v2_p_does_not_use_weak_tags_as_financial_grounding(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        self.assertIn("diagnosis.weak_tags는 사용자의 학습 취약 영역", rules)
+        self.assertIn("금융 사실이나 투자 조언의 근거로 사용하지 마십시오", rules)
+
+    def test_v2_p_zero_weight_asset_is_not_treated_as_holding(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        self.assertIn("비중이 0인 자산은 보유 중이라고 표현하지 마십시오", rules)
+        self.assertIn("현재 보유분에는", rules)
+        self.assertIn("직접 적용되지 않는다고 말할 수 있지만", rules)
+
+    def test_v2_p_defers_judgment_when_sources_are_insufficient(self) -> None:
+        rules = generator.PORTFOLIO_RULES
+
+        self.assertIn("두 자료로 판단할 수 없는 부분은 추론하지 말고", rules)
+        self.assertIn('"현재 자료만으로는 판단하기 어렵습니다"', rules)
+
+    def test_v2_p_output_check_reinforces_grounding_and_length(self) -> None:
+        check = generator.PORTFOLIO_CHECK
+
+        self.assertIn("[금융상품 자료]에 직접 근거하지 않은 문장이 없는지", check)
+        self.assertIn("자료에 없는 인과관계, 의도 또는 적합성", check)
+        self.assertIn("평가를 근거 없이 사용하지 않았는지", check)
+        self.assertIn("질문에 직접 필요한 portfolio 정보만 사용했는지", check)
+        self.assertIn("자료에 없는 다른 자산군의 영향을 추가하지 않았는지", check)
+        self.assertIn("diagnosis.weak_tags를 금융 사실이나 투자 조언의 근거", check)
+        self.assertIn("150~250자 제한", check)
+        self.assertIn("초과하면 부차적인 portfolio 설명부터 삭제", check)
+
     def test_profile_base_can_be_swapped_without_changing_portfolio_layer(self) -> None:
         alternate = generator.PortfolioPromptProfile(base_preset="v1")
         with patch.dict(
