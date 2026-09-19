@@ -42,6 +42,27 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY") or os.getenv("CO_API_KEY")   # 리�
 
 
 # =============================================================================
+# Multi-turn Query Understanding / Conversation Summary
+# =============================================================================
+QUERY_REWRITE_MODEL = os.getenv("QUERY_REWRITE_MODEL", "gpt-4.1-mini")
+QUERY_REWRITE_REASONING_EFFORT = os.getenv("QUERY_REWRITE_REASONING_EFFORT") or None
+QUERY_SUMMARY_MODEL = os.getenv("QUERY_SUMMARY_MODEL", "gpt-4.1-mini")
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_TRACING = _env_bool("LANGSMITH_TRACING")
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "turini-query-rewriter")
+LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT") or None
+
+
+# =============================================================================
 # 청킹 (청크 사이즈 실험 축)
 #   data/docs.jsonl 을 이 설정으로 잘라 인덱싱한다.
 #   설정마다 인덱스가 다른 디렉토리에 저장되므로 스윕해도 서로 덮어쓰지 않는다.
