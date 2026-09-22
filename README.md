@@ -123,7 +123,27 @@ python scripts/eval_rag_triad.py --gen $R/generation.json --corpus $C2 \
 | 규정 준수 | 준수율 7종 · sample_verbatim | `answer_spec.py` |
 | 국가 | JP@k · US 누출 · 미국 용어 · 회피 | `eval_jurisdiction.py` |
 
-### 5. 한 문항만 돌려보기
+### 5. 멀티턴 (대화형)
+
+`multiturn/` 은 팀원(승윤)이 만든 질문 재작성·라우팅·요약·포트폴리오 생성 부품이고, `multiturn/session.py` 가
+그것을 한 대화로 잇는다 — 답변 문장 확정(direct/clarify/portfolio_required 는 정형 문구), state 갱신, 요약 압축.
+검색은 같은 `FinalPipeline` 을 쓰므로 국가 필터가 재작성된 질문에 그대로 적용된다.
+
+```python
+from multiturn.session import build_session
+s = build_session()                              # 포트폴리오 있으면 build_session(portfolio={...})
+print(s.ask("채권이 뭐야?").answer)
+r = s.ask("그럼 종류는?")                          # 후속 질문 → 재작성돼 검색됨
+print(r.rewrite.retrieval_query, r.answer)
+```
+
+```bash
+python scripts/run_multiturn.py --tag smoke      # scripts/scenarios/multiturn_smoke.json 6개 대화 22턴
+                                                  # → results_multiturn/smoke/{turns.json, transcript.md}
+python -m unittest discover -s tests -q          # 단위 테스트 (API 키 불필요)
+```
+
+### 6. 한 문항만 돌려보기
 
 ```python
 from core.pipeline import FinalPipeline

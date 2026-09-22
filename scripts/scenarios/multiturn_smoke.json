@@ -1,0 +1,43 @@
+{
+  "note": "멀티턴 스모크 시나리오. 각 시나리오는 새 세션에서 시작. portfolio 가 있으면 세션에 미리 등록.",
+  "scenarios": [
+    {
+      "name": "followup_bond_kr_us",
+      "purpose": "후속질문 복원 + 국가 라우터: 3턴째 '미국은?' 이 US 로 복원되는지",
+      "turns": ["채권이 뭐야?", "그럼 종류는 어떻게 나뉘어?", "미국은 좀 달라?"]
+    },
+    {
+      "name": "followup_fund_fee",
+      "purpose": "지시어 복원: '그거' 가 펀드 보수로 복원되는지",
+      "turns": ["펀드 수수료는 따로 내는 거야?", "그거 얼마나 되는데?", "ETF 는 더 싸?"]
+    },
+    {
+      "name": "portfolio_missing",
+      "purpose": "포트폴리오 필요 질문인데 등록 안 됨 → portfolio_required 정형 문구",
+      "turns": ["금리가 오르면 채권 가격은 어떻게 돼?", "그럼 내 포트폴리오에는 어떤 영향이야?"]
+    },
+    {
+      "name": "portfolio_present",
+      "purpose": "포트폴리오 등록 → V2_P 경로. 국내주식 55% 안정형 초급",
+      "portfolio": {
+        "sample_id": "P-01",
+        "diagnosis": {"risk_type": "안정형", "style_score": 4, "level_type": "초급", "level_score": 33.3,
+                      "weak_tags": ["분산투자 기본 원리", "위험-수익 관계"]},
+        "portfolio": {"input_mode": "실제",
+                      "allocation": {"국내주식": 0.55, "해외주식": 0.10, "채권": 0.05, "현금성자산": 0.30}}
+      },
+      "turns": ["금리가 오르면 채권 가격은 어떻게 돼?", "그럼 내 포트폴리오에는 어떤 영향이야?", "국내주식 비중이 높은 편이야?"]
+    },
+    {
+      "name": "direct_and_clarify",
+      "purpose": "인사 → direct, 맥락 없는 지시어 → clarify, 그 뒤 정상 질문",
+      "turns": ["안녕!", "그건 어때?", "ETF가 뭐야?", "고마워"]
+    },
+    {
+      "name": "long_topic_switch",
+      "purpose": "7턴 — 메시지 6개 초과로 요약 압축 발생, 주제 전환(펀드→주식) 뒤 지시어가 최근 주제로 붙는지",
+      "turns": ["펀드는 원금이 보장돼?", "환매는 언제 할 수 있어?", "수수료는?", "주식은 하루에 얼마나 오르내릴 수 있어?",
+                "그건 미국도 같아?", "배당은 뭐야?", "그거 세금은 얼마야?"]
+    }
+  ]
+}
