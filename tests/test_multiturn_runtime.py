@@ -12,7 +12,10 @@ from multiturn.conversation_summarizer import (
     build_conversation_summary_trace_inputs,
     maintain_conversation_summary,
 )
-from multiturn.prompts.query_rewrite import build_query_rewrite_input
+from multiturn.prompts.query_rewrite import (
+    QUERY_REWRITE_SYSTEM_PROMPT,
+    build_query_rewrite_input,
+)
 from multiturn.query_rewriter import QueryRewriteError, QueryRewriter
 from multiturn.state import ConversationState
 
@@ -71,7 +74,136 @@ def state_with_messages(count: int) -> ConversationState:
     return state
 
 
+def state_with_old_bond_summary_and_recent_etf() -> ConversationState:
+    state = ConversationState(
+        conversation_summary=(
+            "사용자는 채권 가격과 금리의 역관계 및 금리 상승 영향을 질문했다."
+        )
+    )
+    state.add_user_message("왜 금리가 오르면 채권 가격은 내려가?")
+    state.add_assistant_message("기존 채권의 상대적 매력이 낮아지기 때문입니다.")
+    state.add_user_message("ETF 내용에서 지수를 따라가는 건 둘 중 뭐였지?")
+    state.add_assistant_message("인덱스 ETF가 지수를 추종합니다.")
+    state.add_user_message("아까 처음에 ETF를 뭐라고 설명했지?")
+    state.add_assistant_message("ETF는 거래소에서 거래되는 펀드입니다.")
+    return state
+
+
 class MultiTurnRuntimeTest(unittest.TestCase):
+    def test_implicit_portfolio_referent_prefers_recent_etf_over_old_bond_summary(
+        self,
+    ) -> None:
+        current = "내 포트폴리오에서는 어떤 의미야?"
+        state = state_with_old_bond_summary_and_recent_etf()
+        state.portfolio_context = {"api_key": "SECRET", "채권": 0.0}
+        responses = FakeResponsesAPI(
+            query_payload(
+                current,
+                "ETF의 구조와 지수 추종 특성이 포트폴리오에 미치는 일반적인 의미",
+                is_followup=True,
+                needs_portfolio=True,
+            )
+        )
+
+        result = QueryRewriter(client=FakeOpenAIClient(responses)).rewrite(
+            current,
+            state,
+        )
+
+        self.assertIn("ETF", result.retrieval_query)
+        self.assertNotIn("채권", result.retrieval_query)
+        self.assertTrue(result.is_followup)
+        self.assertTrue(result.needs_portfolio)
+        self.assertEqual(result.route, "rag")
+        request = responses.calls[0]
+        self.assertLess(
+            request["input"].index("[대화 요약]"),
+            request["input"].index("[최근 대화]"),
+        )
+        self.assertIn("가장 최근 완료된 명확한", request["instructions"])
+        self.assertIn("최근 주제를 덮어쓰면 안 된다", request["instructions"])
+        self.assertNotIn("SECRET", request["input"])
+
+    def test_explicit_callback_can_select_old_bond_topic(self) -> None:
+        current = "아까 채권 얘기로 돌아가서 내 포트폴리오에서는 어떤 의미야?"
+        state = state_with_old_bond_summary_and_recent_etf()
+        responses = FakeResponsesAPI(
+            query_payload(
+                current,
+                "금리 상승과 채권 가격 변화가 포트폴리오에 미치는 일반적인 영향",
+                is_followup=True,
+                needs_portfolio=True,
+            )
+        )
+
+        result = QueryRewriter(client=FakeOpenAIClient(responses)).rewrite(
+            current,
+            state,
+        )
+
+        self.assertIn("채권", result.retrieval_query)
+        self.assertTrue(result.is_followup)
+        self.assertTrue(result.needs_portfolio)
+        self.assertIn(
+            "명시적으로 지칭하면 해당 과거 주제를",
+            QUERY_REWRITE_SYSTEM_PROMPT,
+        )
+
+    def test_existing_pair_ordinal_and_topic_callback_referents_remain_supported(
+        self,
+    ) -> None:
+        comparison_state = ConversationState()
+        comparison_state.add_user_message(
+            "인덱스 ETF랑 액티브 ETF는 뭐가 달라?"
+        )
+        comparison_state.add_assistant_message(
+            "첫 번째는 지수를 추종하고 두 번째는 운용자가 종목을 선택합니다."
+        )
+        callback_state = ConversationState(
+            conversation_summary="처음에는 ETF의 정의와 구조를 설명했다."
+        )
+        callback_state.add_user_message("채권 가격이랑 금리는 어떤 관계야?")
+        callback_state.add_assistant_message("대체로 반대 방향으로 움직입니다.")
+
+        cases = [
+            (
+                "둘의 추적 오차는 왜 생겨?",
+                comparison_state,
+                "인덱스 ETF와 액티브 ETF의 추적 오차 발생 원인",
+                ("인덱스 ETF", "액티브 ETF"),
+            ),
+            (
+                "첫 번째 방식의 장점은 뭐야?",
+                comparison_state,
+                "인덱스 ETF 방식의 장점",
+                ("인덱스 ETF",),
+            ),
+            (
+                "처음 말한 ETF는 어떤 상품이었지?",
+                callback_state,
+                "ETF의 기본 개념과 구조",
+                ("ETF",),
+            ),
+        ]
+        for question, state, retrieval_query, expected_terms in cases:
+            with self.subTest(question=question):
+                responses = FakeResponsesAPI(
+                    query_payload(
+                        question,
+                        retrieval_query,
+                        is_followup=True,
+                        needs_portfolio=False,
+                    )
+                )
+
+                result = QueryRewriter(
+                    client=FakeOpenAIClient(responses)
+                ).rewrite(question, state)
+
+                self.assertTrue(result.is_followup)
+                for term in expected_terms:
+                    self.assertIn(term, result.retrieval_query)
+
     def test_query_rewriter_keeps_followup_semantics_and_strict_schema(self) -> None:
         current = "그럼 둘의 추적 오차는 왜 생겨?"
         state = ConversationState()

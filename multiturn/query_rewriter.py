@@ -128,7 +128,11 @@ def _sanitize_traceable_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _serialize_traceable_outputs(output: QueryRewriteResult) -> dict[str, Any]:
+def _serialize_traceable_outputs(
+    output: QueryRewriteResult | None,
+) -> dict[str, Any]:
+    if output is None:
+        return {}
     return asdict(output)
 
 

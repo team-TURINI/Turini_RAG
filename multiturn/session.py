@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from core.generator import GenerationResult
 from multiturn.conversation_summarizer import (
@@ -136,25 +136,51 @@ class MultiTurnSession:
     def set_portfolio(self, portfolio: Optional[dict[str, Any]]) -> None:
         self.state.set_portfolio_context(portfolio)
 
+    def reset_conversation(self) -> None:
+        """대화와 턴 history만 초기화하고 portfolio는 유지한다."""
+
+        self.state.messages.clear()
+        self.state.set_summary("")
+        self.history.clear()
+
+    def reset_all(self) -> None:
+        """대화, 턴 history, portfolio를 모두 초기화한다."""
+
+        self.reset_conversation()
+        self.state.set_portfolio_context(None)
+
     def transcript(self) -> list[dict[str, str]]:
         return [{"role": m.role, "content": m.content} for m in self.state.messages]
+
+
+_PORTFOLIO_UNSET = object()
 
 
 def build_session(
     *,
     pipeline=None,
-    portfolio: Optional[dict[str, Any]] = None,
+    portfolio: Optional[dict[str, Any]] | object = _PORTFOLIO_UNSET,
+    state: Optional[ConversationState] = None,
     general_prompt_preset: Optional[str] = None,
     summarize: bool = True,
     recent_message_limit: int = 6,
     replies: Optional[dict[str, str]] = None,
     verbose: bool = False,
 ) -> MultiTurnSession:
-    """실제 구성요소로 세션을 조립한다. pipeline 을 주면(여러 세션이 공유) 인덱스를 다시 안 읽는다."""
+    """실제 구성요소로 세션을 조립한다.
+
+    pipeline을 주면 여러 세션이 인덱스를 공유할 수 있다. 저장된 state를 복원할 때는
+    state만 전달해야 하며, portfolio와 state를 함께 명시하면 모호성을 막기 위해 거부한다.
+    """
     from core.pipeline import FinalPipeline
     from multiturn.generation_adapter import MultiTurnGeneratorAdapter
     from multiturn.query_rewriter import QueryRewriter
     from multiturn.rag_adapter import MultiTurnRAGAdapter
+
+    if state is not None and portfolio is not _PORTFOLIO_UNSET:
+        raise ValueError("portfolio와 state는 동시에 전달할 수 없습니다.")
+    if state is not None and not isinstance(state, ConversationState):
+        raise TypeError("state는 ConversationState여야 합니다.")
 
     if pipeline is None:
         pipeline = FinalPipeline(verbose=verbose)
@@ -164,7 +190,13 @@ def build_session(
         MultiTurnRAGAdapter(pipeline),
         MultiTurnGeneratorAdapter(**gen_kwargs),
     )
-    state = ConversationState(portfolio_context=portfolio)
+    if state is None:
+        initial_portfolio = (
+            None
+            if portfolio is _PORTFOLIO_UNSET
+            else cast(Optional[dict[str, Any]], portfolio)
+        )
+        state = ConversationState(portfolio_context=initial_portfolio)
     return MultiTurnSession(
         orchestrator,
         summarizer=ConversationSummarizer() if summarize else None,
