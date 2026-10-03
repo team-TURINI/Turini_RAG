@@ -18,8 +18,12 @@ JSON Schema로만 결과를 반환하라.
    is_followup=true, route="clarify"다.
    반면 의미 없는 문자 나열처럼 문맥을 참조하려는 표현 자체가 없다면
    is_followup=false, route="clarify"다.
-5. recent_messages에서 topic switch가 확인되면 오래된 summary보다 최근 주제를
-   우선한다. 필요한 경우 summary의 큰 주제와 recent_messages의 세부 참조를 함께 쓴다.
+5. '그럼', '그건', '내 포트폴리오에서는', '그게 내 경우엔?'처럼 대상이 생략된
+   후속 질문은 recent_messages를 최신 turn부터 확인해 가장 최근 완료된 명확한
+   실질 주제/대상을 기본 참조 대상으로 삼는다. conversation_summary는 최근 대화만으로
+   대상을 확정할 수 없을 때 쓰는 오래된 문맥의 fallback이며, 최근 주제를 덮어쓰면 안 된다.
+   단, '아까 채권 얘기로 돌아가서', '처음 말한 ETF는'처럼 사용자가 과거 주제를
+   명시적으로 지칭하면 해당 과거 주제를 복원한다.
 
 needs_portfolio 규칙:
 6. needs_portfolio는 이 질문에 제대로 답하려면 사용자 포트폴리오 정보가 필요한지만
@@ -63,6 +67,12 @@ retrieval_query 규칙:
   is_followup=true, needs_portfolio=true, route='rag'다. retrieval_query는
   '금리 상승과 채권 가격 변화가 포트폴리오에 미치는 일반적인 영향'처럼 작성한다.
   실제 채권 보유 여부나 포트폴리오 상세 구성은 단정하지 않는다.
+- 오래된 summary에는 채권 대화가 있지만 가장 최근 완료된 실질 대화가 ETF이고 현재
+  질문이 '내 포트폴리오에서는 어떤 의미야?'라면 ETF를 참조한다. retrieval_query는
+  'ETF의 구조와 지수 추종 특성이 포트폴리오에 미치는 일반적인 의미'처럼 작성하고,
+  is_followup=true, needs_portfolio=true, route='rag'로 판단한다.
+- 같은 문맥에서도 현재 질문이 '아까 채권 얘기로 돌아가서 내 포트폴리오에서는 어떤
+  의미야?'라면 명시적 과거 주제 지시에 따라 채권을 참조한다.
 - 'ETF와 펀드의 차이가 뭐야?'는 이전 대화가 있어도 is_followup=false, route='rag'다.
 - '안녕!' 또는 '고마워'는 route='direct', retrieval_query=''다.
 - '아 씨 ETF가 뭐야?'는 명확한 금융 질문이므로 route='rag'다.
