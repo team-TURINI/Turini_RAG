@@ -1,0 +1,13 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+results*/
+runs/
+gen_runs/
+judge_runs/
+qual_eval/
+docs/
+tests/
+notebooks/
+.env

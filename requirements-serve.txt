@@ -1,0 +1,4 @@
+# 서빙 전용 — 로컬 실험에는 필요 없다 (requirements.txt 와 함께 설치)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+huggingface_hub>=0.25       # 기동 시 비공개 HF Dataset 에서 코퍼스·인덱스 내려받기 (HF_DATASET 설정 시)
