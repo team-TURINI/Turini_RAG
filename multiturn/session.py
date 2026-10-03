@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional, cast
 
+from core import trace as _trace
 from core.generator import GenerationResult
 from multiturn.conversation_summarizer import (
     ConversationSummarizer,
@@ -91,6 +92,8 @@ class MultiTurnSession:
         state: Optional[ConversationState] = None,
         recent_message_limit: int = 6,
         replies: Optional[dict[str, str]] = None,
+        thread_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         self.orchestrator = orchestrator
         self.summarizer = summarizer
@@ -98,10 +101,33 @@ class MultiTurnSession:
         self.recent_message_limit = recent_message_limit
         self.replies = {**DEFAULT_REPLIES, **(replies or {})}
         self.history: list[TurnResponse] = []
+        # LangSmith Thread 로 한 대화를 묶는 키. 앱에서는 conversation_id 를 그대로 쓴다.
+        self.thread_id = thread_id
+        self.user_id = user_id
+        self.last_diagnostics: dict = {}
 
     def ask(self, question: str, *, scenario_name: Optional[str] = None) -> TurnResponse:
         if not question.strip():
             raise ValueError("question 은 비어 있을 수 없습니다.")
+        turn_index = len(self.history) + 1
+        meta = {"thread_id": self.thread_id, "session_id": self.thread_id,
+                "conversation_id": self.thread_id, "user_id": self.user_id, "turn_index": turn_index}
+        with _trace.collect() as diag, _trace.span(
+                "turn", inputs={"question": question},
+                metadata={k: v for k, v in meta.items() if v is not None},
+                tags=[f"scenario:{scenario_name}"] if scenario_name else None) as sp:
+            resp = self._ask(question, scenario_name=scenario_name, turn_index=turn_index)
+            diag.update({"route": resp.rewrite.route, "status": resp.status,
+                         "is_followup": resp.rewrite.is_followup,
+                         "needs_portfolio": resp.rewrite.needs_portfolio,
+                         "summary_updated": resp.summary_updated})
+            sp.add_metadata(diag)
+            sp.end(outputs={"answer": resp.answer, "status": resp.status,
+                            "retrieval_query": resp.rewrite.retrieval_query})
+        self.last_diagnostics = dict(diag)
+        return resp
+
+    def _ask(self, question: str, *, scenario_name: Optional[str], turn_index: int) -> TurnResponse:
         result = self.orchestrator.generate_turn(question, self.state, scenario_name=scenario_name)
 
         if result.generation_status == "generated":
@@ -128,7 +154,7 @@ class MultiTurnSession:
             question=question, answer=answer, status=result.generation_status,
             rewrite=result.rewrite_result, rag=result.rag_result,
             generation=result.generation_result, profile=result.generation_profile,
-            summary_updated=summary_updated, turn_index=len(self.history) + 1,
+            summary_updated=summary_updated, turn_index=turn_index,
         )
         self.history.append(resp)
         return resp
@@ -165,6 +191,8 @@ def build_session(
     summarize: bool = True,
     recent_message_limit: int = 6,
     replies: Optional[dict[str, str]] = None,
+    thread_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     verbose: bool = False,
 ) -> MultiTurnSession:
     """실제 구성요소로 세션을 조립한다.
@@ -201,4 +229,5 @@ def build_session(
         orchestrator,
         summarizer=ConversationSummarizer() if summarize else None,
         state=state, recent_message_limit=recent_message_limit, replies=replies,
+        thread_id=thread_id, user_id=user_id,
     )
