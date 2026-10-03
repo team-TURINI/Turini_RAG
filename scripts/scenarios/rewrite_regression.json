@@ -1,0 +1,169 @@
+{
+  "note": "재작성기 회귀 세트 (2026-10-03). 각 시나리오의 마지막 턴이 채점 대상. contains=모두 포함, contains_any=하나 이상, not_contains=하나도 없어야 함 (retrieval_query 기준).",
+  "scenarios": [
+    {
+      "name": "R1_relation_recent",
+      "purpose": "직전 분산투자 → 'ETF랑 무슨 관계야?' = 분산투자+ETF+관계",
+      "turns": [
+        "분산투자가 뭐야?",
+        "ETF랑 무슨 관계야?"
+      ],
+      "expect": {
+        "2": {
+          "contains": [
+            "분산투자",
+            "ETF",
+            "관계"
+          ],
+          "not_contains": [
+            "차이",
+            "다른",
+            "다르",
+            "비교",
+            "채권"
+          ]
+        }
+      }
+    },
+    {
+      "name": "R2_diff_recent",
+      "purpose": "직전 분산투자 → 'ETF랑 뭐가 달라?' = 분산투자+ETF+차이",
+      "turns": [
+        "분산투자가 뭐야?",
+        "ETF랑 뭐가 달라?"
+      ],
+      "expect": {
+        "2": {
+          "contains": [
+            "분산투자",
+            "ETF"
+          ],
+          "contains_any": [
+            "차이",
+            "다른",
+            "다르",
+            "비교"
+          ],
+          "not_contains": [
+            "관계"
+          ]
+        }
+      }
+    },
+    {
+      "name": "R3_relation_reverse",
+      "purpose": "직전 ETF → '분산투자랑 무슨 관계야?' = ETF+분산투자+관계",
+      "turns": [
+        "ETF가 뭐야?",
+        "분산투자랑 무슨 관계야?"
+      ],
+      "expect": {
+        "2": {
+          "contains": [
+            "ETF",
+            "분산투자",
+            "관계"
+          ],
+          "not_contains": [
+            "차이",
+            "다른",
+            "다르",
+            "비교"
+          ]
+        }
+      }
+    },
+    {
+      "name": "R4_summary_not_override",
+      "purpose": "요약은 채권, 직전 분산투자 → 'ETF랑 무슨 관계야?' 채권 금지",
+      "turns": [
+        "국채가 뭐야",
+        "회사채는?",
+        "둘의 신용위험 차이는?",
+        "분산투자가 뭐야?",
+        "ETF랑 무슨 관계야?"
+      ],
+      "expect": {
+        "5": {
+          "contains": [
+            "분산투자",
+            "ETF"
+          ],
+          "not_contains": [
+            "채권",
+            "국채",
+            "회사채",
+            "차이",
+            "다른",
+            "다르",
+            "비교"
+          ]
+        }
+      }
+    },
+    {
+      "name": "R5_explicit_callback",
+      "purpose": "명시적 과거 호출 '아까 채권 얘기로' → 채권+ETF",
+      "turns": [
+        "국채가 뭐야",
+        "회사채는?",
+        "둘의 신용위험 차이는?",
+        "분산투자가 뭐야?",
+        "아까 채권 얘기로 돌아가서 ETF랑 무슨 관계야?"
+      ],
+      "expect": {
+        "5": {
+          "contains": [
+            "ETF"
+          ],
+          "contains_any": [
+            "채권",
+            "국채",
+            "회사채"
+          ],
+          "not_contains": [
+            "분산투자"
+          ]
+        }
+      }
+    },
+    {
+      "name": "R6_inherit_aspect",
+      "purpose": "직전 '국채의 신용위험은?' → '회사채는?' = 회사채의 신용위험",
+      "turns": [
+        "국채의 신용위험은?",
+        "회사채는?"
+      ],
+      "expect": {
+        "2": {
+          "contains": [
+            "회사채",
+            "신용위험"
+          ]
+        }
+      }
+    },
+    {
+      "name": "R7_no_forced_comparison",
+      "purpose": "직전 '국채가 뭐야' → '회사채는?' = 정의·특징, 비교 강제 금지",
+      "turns": [
+        "국채가 뭐야",
+        "회사채는?"
+      ],
+      "expect": {
+        "2": {
+          "contains": [
+            "회사채"
+          ],
+          "not_contains": [
+            "국채",
+            "차이",
+            "다른",
+            "다르",
+            "비교"
+          ]
+        }
+      }
+    }
+  ]
+}
