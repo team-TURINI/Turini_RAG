@@ -930,6 +930,25 @@ def _generate_openai_messages(
 ) -> GenerationResult:
     """일반/V2_P가 공유하는 OpenAI Chat Completions 호출 경로."""
 
+    from core import trace as _trace
+    with _trace.span("generation", run_type="llm",
+                     inputs={"messages": _trace.mask_messages(messages)},
+                     metadata={"model": model, "temperature": temperature,
+                               "max_tokens": max_tokens, "top_p": top_p}) as _sp:
+        result = __generate_openai_messages(messages, model, temperature, max_tokens, top_p)
+        _sp.end(outputs={"answer": result.answer, "finish_reason": result.finish_reason},
+                input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                latency_s=round(result.latency, 3))
+    return result
+
+
+def __generate_openai_messages(
+    messages: list[dict],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    top_p: float,
+) -> GenerationResult:
     client = _get_client()
     kwargs = {
         "temperature": temperature,

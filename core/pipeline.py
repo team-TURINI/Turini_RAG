@@ -65,6 +65,7 @@ class RAGPipeline:
 import time as _time
 
 import config as _cfg
+from core import trace as _trace
 from core.generator import resolve_preset
 from core.reranker import CohereReranker
 from core.retriever import BM25Retriever, DenseIndexRetriever, HybridRetriever, load_corpus
@@ -74,7 +75,9 @@ class FinalPipeline:
     """확정 사양 RAG 파이프라인. 무거운 것(인덱스·BM25·클라이언트)은 생성 시 한 번만 로드."""
 
     def __init__(self, *, prompt_preset: str = "v2_4j", verbose: bool = True,
-                 jurisdiction_filter: bool = None) -> None:
+                 jurisdiction_filter: bool = None, serve_mode: bool = False) -> None:
+        """serve_mode: 사용자 요청을 직접 받는 서버용. 리랭커가 429 로 실패해도 멈추지 않고
+        하이브리드 순위로 답한다(품질 하락은 retrieve() 의 rerank_failed 로 알린다)."""
         t0 = _time.time()
         self.corpus = load_corpus(_cfg.FINAL_CORPUS)
         # 관할 필터 — config.FINAL_JURISDICTION_FILTER 가 기본. False 면 2026-09-19 이전과 동일 동작
@@ -100,9 +103,12 @@ class FinalPipeline:
             rrf_k=_cfg.FINAL_RRF_K, w_dense=_cfg.FINAL_RRF_W_DENSE, w_bm25=_cfg.FINAL_RRF_W_BM25,
             pool=_cfg.FINAL_HYBRID_POOL, out_k=_cfg.FINAL_HYBRID_POOL,
         )
-        self.reranker = CohereReranker(_cfg.FINAL_RERANK_MODEL,
-                                       candidate_k=_cfg.FINAL_CANDIDATE_K,
-                                       text_field=_cfg.FINAL_CTX_FIELD)
+        from core.reranker import SERVE_MAX_RETRY, SERVE_MIN_INTERVAL_S
+        self.serve_mode = serve_mode
+        self.reranker = CohereReranker(
+            _cfg.FINAL_RERANK_MODEL, candidate_k=_cfg.FINAL_CANDIDATE_K, text_field=_cfg.FINAL_CTX_FIELD,
+            **({"on_failure": "passthrough", "min_interval_s": SERVE_MIN_INTERVAL_S,
+                "max_retry": SERVE_MAX_RETRY, "backoff_s": 1.0} if serve_mode else {}))
         self.prompt_version, self.placement = resolve_preset(prompt_preset)
         self.prompt_preset = prompt_preset
         if verbose:
@@ -121,19 +127,76 @@ class FinalPipeline:
             out.append(text)
         return out
 
+    def chunk_brief(self, chunk_id: str) -> Dict[str, Any]:
+        """청크 한 줄 요약 — 출처·국가가 보여야 '왜 이게 올라왔나'를 판단할 수 있다."""
+        c = self.corpus.get(chunk_id, {})
+        out = {"chunk_id": chunk_id, "title": c.get("title", "")[:60], "source": c.get("source_name")}
+        if self.jmap is not None:
+            out["jurisdiction"] = self.jmap.of_chunk(chunk_id)
+        return out
+
+    def rank_trace(self, r: Dict[str, Any], chunk_ids: List[str], *, with_text: bool) -> List[Dict[str, Any]]:
+        """각 청크가 **단계별로 몇 위였는지**. 실패 원인이 거의 항상 여기서 보인다
+        (한 문서가 상위를 독식했는지, 리랭커가 끌어올렸는지, 애초에 후보에 없었는지)."""
+        names = {"dense": "dense_rank", "bm25": "bm25_rank", "hybrid": "hybrid_rank", "reranked": "rerank_rank"}
+        # 아직 안 거친 단계는 넣지 않는다 — 검색 단계의 trace 에 rerank_rank: null 이 섞이면 읽기 나쁘다
+        pos = {names[k]: {c: i + 1 for i, c in enumerate(r[k])} for k in names if r.get(k)}
+        out = []
+        for cid in chunk_ids:
+            d = self.chunk_brief(cid)
+            d.update({k: v.get(cid) for k, v in pos.items()})
+            if with_text:
+                d["text"] = self.corpus.get(cid, {}).get(_cfg.FINAL_CTX_FIELD, "")
+            out.append(d)
+        return out
+
+    def retrieve_diagnostics(self, r: Dict[str, Any]) -> Dict[str, Any]:
+        """턴 단위로 걸러 보기 좋은 진단 지표 — LangSmith 에서 이 값으로 필터링한다."""
+        top = r["reranked"][: _cfg.FINAL_TOP_K_GEN]
+        docs = {c.split("__", 1)[0] for c in top}
+        md: Dict[str, Any] = {
+            "top3_distinct_docs": len(docs),          # 1 이면 한 문서가 독식 (중복 청크 문제)
+            "rerank_failed": r.get("rerank_failed", False),
+            "jurisdiction": r.get("jurisdiction"),
+        }
+        if self.jmap is not None:
+            cand = r["hybrid"][: _cfg.FINAL_CANDIDATE_K]
+            md["us_in_top3"] = sum(1 for c in top if self.jmap.of_chunk(c) == "US")
+            md["us_in_candidates"] = sum(1 for c in cand if self.jmap.of_chunk(c) == "US")
+        return md
+
     def retrieve(self, question: str) -> Dict[str, Any]:
         """생성 없이 검색·리랭킹까지만. 회귀 대조와 검색 지표 계산에 쓴다.
         관할 필터가 켜져 있으면 질문 관할을 판별해 Dense·BM25 단계에서 거른다 (리랭커 앞)."""
-        if self.jfilter:
-            from core.jurisdiction import detect
-            j = detect(question)
-            r = self.retriever.search(question, jmap=self.jmap, allowed=j["allowed"])
-            r["jurisdiction"] = j["jurisdiction"]
-            r["allowed"] = sorted(j["allowed"]) if j["allowed"] else None
-            r["signals"] = {"us": j["signals_us"], "kr": j["signals_kr"]}
-        else:
-            r = self.retriever.search(question)
-        r["reranked"] = self.reranker.rerank(question, r["hybrid"], self.corpus)
+        with _trace.span("retrieval", run_type="retriever", inputs={"question": question}) as sp:
+            if self.jfilter:
+                from core.jurisdiction import detect
+                j = detect(question)
+                r = self.retriever.search(question, jmap=self.jmap, allowed=j["allowed"])
+                r["jurisdiction"] = j["jurisdiction"]
+                r["allowed"] = sorted(j["allowed"]) if j["allowed"] else None
+                r["signals"] = {"us": j["signals_us"], "kr": j["signals_kr"]}
+            else:
+                r = self.retriever.search(question)
+            sp.end(outputs={"jurisdiction": r.get("jurisdiction"), "allowed": r.get("allowed"),
+                            "signals": r.get("signals"),
+                            # 앞 단계 후보는 식별자만 — 본문까지 넣으면 페이로드가 폭증한다
+                            "dense_top10": [self.chunk_brief(c) for c in r["dense"][:10]],
+                            "bm25_top10": [self.chunk_brief(c) for c in r["bm25"][:10]],
+                            "hybrid_top10": self.rank_trace(r, r["hybrid"][:10], with_text=False)})
+
+        with _trace.span("rerank", run_type="chain",
+                         inputs={"candidate_k": _cfg.FINAL_CANDIDATE_K,
+                                 "candidates": [self.chunk_brief(c) for c in r["hybrid"][:_cfg.FINAL_CANDIDATE_K]]}) as sp:
+            r["reranked"] = self.reranker.rerank(question, r["hybrid"], self.corpus)
+            r["rerank_failed"] = self.reranker.last_failed
+            # 최종 Top3 만 본문까지 — 실제로 생성에 들어간 자료라 눈으로 확인할 가치가 있다
+            r["top_k_detail"] = self.rank_trace(r, r["reranked"][: _cfg.FINAL_TOP_K_GEN], with_text=True)
+            sp.end(outputs={"rerank_failed": r["rerank_failed"], "top_k": r["top_k_detail"],
+                            "next_5": self.rank_trace(r, r["reranked"][_cfg.FINAL_TOP_K_GEN:_cfg.FINAL_TOP_K_GEN + 5],
+                                                      with_text=False)})
+        r["diagnostics"] = self.retrieve_diagnostics(r)
+        _trace.annotate(r["diagnostics"])
         return r
 
     def run(self, question: str, *, skip_generation: bool = False) -> Dict[str, Any]:
