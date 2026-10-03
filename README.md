@@ -143,7 +143,92 @@ python scripts/run_multiturn.py --tag smoke      # scripts/scenarios/multiturn_s
 python -m unittest discover -s tests -q          # 단위 테스트 (API 키 불필요)
 ```
 
-### 6. 한 문항만 돌려보기
+### 6. 로그인 사용자의 대화 이력
+
+`multiturn/chat_service.py` 가 저장소와 세션을 잇는다. 사용자가 다시 로그인하면 지난 대화 목록과
+내역이 그대로 보이고, 이어서 질문하면 문맥도 복원된다.
+
+**두 가지를 나눠 저장한다** — `ConversationState` 는 요약 압축 때 오래된 메시지를 지우므로,
+그것만 저장하면 화면에 보여줄 지난 대화가 사라진다.
+
+| 저장 대상 | 내용 | 쓰임 |
+|---|---|---|
+| `state` | 최근 메시지 + 누적 요약 | 다음 턴 문맥 복원 |
+| `messages` | 주고받은 전부 (지워지지 않음) | 화면에 보여줄 대화 내역 |
+
+```python
+from multiturn.chat_service import ChatService
+svc = ChatService()                                      # 인덱스·리랭커·재작성기 1회 로드
+
+convs = svc.list_conversations(user_id)                  # 로그인 직후 대화 목록
+msgs  = svc.history(user_id, convs[0].conversation_id)   # 지난 대화 그대로 표시
+turn  = svc.ask(user_id, "그럼 종류는?",
+                conversation_id=convs[0].conversation_id,
+                portfolio=app_db.portfolio_of(user_id))  # 포트폴리오는 매 요청에 주입
+turn.answer, turn.conversation_id                        # id 없이 부르면 새 대화를 만들어 돌려준다
+```
+
+- 요청마다 저장소에서 state 를 꺼내 세션을 만들고 답변 뒤 저장한다 → **서버를 재시작해도 대화가 끊기지 않는다**
+- 저장소는 `SqliteConversationStore`(기본, `data/chat/conversations.db`) 와 `JsonConversationStore`.
+  앱이 자체 DB 를 쓰면 `ConversationStore` 프로토콜 6개 메서드만 구현해 갈아끼운다
+- 모든 조회·수정이 `user_id` 로 걸러지므로 남의 `conversation_id` 를 알아도 열리지 않는다
+- **포트폴리오는 기본적으로 저장하지 않는다** (보유 자산·진단 결과). 앱이 매 요청에 넣어주는 것을 전제로 하며,
+  개발용으로 저장하려면 `ChatService(persist_portfolio=True)`
+- 대화 데이터는 `data/` 아래라 git 에 올라가지 않는다
+
+```bash
+python scripts/chat_multiturn.py --user yejin          # 로그인 모드 — 지난 대화를 이어서
+python scripts/chat_multiturn.py --user yejin --new    # 새 대화로 시작
+# 대화 중 명령: /list /open <번호> /new /history /title <제목> /delete /state /debug on
+```
+
+### 7. 서비스로 띄우기 (앱 연동)
+
+앱 백엔드가 HTTP 로 호출하는 RAG 서비스. **DB 없는 무상태** — 대화 저장은 앱이 하고, RAG 는 매 요청에
+이전 문맥(`state`)을 받아 답변과 갱신된 `state` 를 돌려준다. 배포 구성·실측치는 `docs/deploy_plan.md`,
+앱 팀용 계약은 `docs/rag_service_overview.md`.
+
+```bash
+pip install -r requirements-serve.txt
+RAG_API_KEY=... uvicorn serve.api:app --host 0.0.0.0 --port 7860
+```
+
+| 엔드포인트 | 용도 |
+|---|---|
+| `GET /health` | 기동 완료 여부 — 기동 중·실패면 503 (인증 없음 — 깨우기 ping·헬스체크) |
+| `POST /chat` | `{user_id, question, conversation_id?, state?, portfolio?}` → `{answer, status, state, messages, suggested_title, degraded, …}` |
+
+- `state` 는 앱이 해석하지 않는 값 — 저장했다가 다음 요청에 그대로 넣는다. `messages` 는 이번 턴의 user·assistant 2개로, 앱 내역 테이블에 추가
+- `RAG_API_KEY` 를 두면 `X-API-Key` 헤더를 요구한다 — **배포 시 반드시 설정** (호출마다 OpenAI·Cohere 비용)
+- 검색 데이터가 없으면 `HF_DATASET`(비공개 Dataset)·`HF_TOKEN` 으로 기동 때 내려받는다 (`serve/bootstrap.py`)
+- 기동 42초, 메모리 약 900MB → **RAM 2GB 이상**인 곳에 올릴 것. `Dockerfile` 은 7860 포트(HF Spaces 기본)
+- 서빙 모드에서는 Cohere 429 가 나도 죽지 않고 하이브리드 순위로 답하며 응답에 `degraded: true` 를 넣는다
+- 로컬에서 대화를 직접 저장하며 써 보려면 `scripts/chat_multiturn.py --user <이름>` (SQLite, `/list /open /new` 등)
+
+### 8. 관찰 (LangSmith)
+
+한 대화 = Thread(`thread_id` = `conversation_id`), 한 턴 = trace, 그 안에 단계가 child 로 들어간다.
+설계·검증 내용은 `docs/observability_plan.md`.
+
+```
+turn                 user_id · turn_index · 진단 지표(metadata)
+├─ query_rewrite     재작성 질문 · route
+├─ retrieval         관할 판정 + 단계별 순위 (dense/bm25/hybrid)
+├─ rerank            Top3 본문 + 순위 이동 + 실패 여부
+├─ generation        프롬프트(포트폴리오 마스킹) · 토큰 · 지연
+└─ summary_update    (압축이 일어난 턴만)
+```
+
+```bash
+LANGSMITH_TRACING=true LANGSMITH_API_KEY=... python scripts/chat_multiturn.py --user yejin
+```
+
+- **기본은 꺼짐** — 꺼져 있으면 추적 코드를 아예 타지 않는다 (배치 실험이 무료 한도를 쓰지 않도록)
+- 포트폴리오는 **값을 가리고 구조만** 기록한다. 원본이 필요하면 `TRACE_PORTFOLIO=raw` (실사용자 데이터엔 쓰지 말 것)
+- 턴 metadata 의 `top3_distinct_docs`(1이면 한 문서 독식) · `us_in_top3` · `rerank_failed` 로 **문제 턴만 걸러 볼 수 있다.**
+  같은 값이 대화 DB 메시지 meta 에도 저장돼 LangSmith 없이도 집계된다
+
+### 9. 한 문항만 돌려보기
 
 ```python
 from core.pipeline import FinalPipeline

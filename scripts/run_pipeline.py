@@ -72,7 +72,7 @@ def main() -> None:
     ap.add_argument("--tag", required=True, help="results_e2e/<tag>/ 에 저장")
     ap.add_argument("--split", choices=["dev", "holdout", "all"], default="all")
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--prompt-preset", default="v2_4")
+    ap.add_argument("--prompt-preset", default="v2_4j")
     ap.add_argument("--mode", choices=["final", "baseline"], default="final",
                     help="baseline = 같은 코퍼스에서 Dense 단독 Top5 + 프롬프트 v1")
     ap.add_argument("--skip-generation", action="store_true",
