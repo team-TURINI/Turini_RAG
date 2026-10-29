@@ -123,6 +123,10 @@ TOP_P = 0.9
 #     이미 잘라둔 코퍼스를 그대로 쓴다. 재청킹하지 않는다.
 FINAL_CORPUS = PROJECT_ROOT / "data" / "chunking_data" / "fixed_450_70" / "clean_chunks_450_70_v2.jsonl"
 FINAL_INDEX_DIR = PROJECT_ROOT / "vectorstores" / "fixed_450_70_v2"      # FAISS (text-embedding-3-large)
+QUIZ_CORPUS = PROJECT_ROOT / "data" / "quizzes" / "quiz_corpus.jsonl"
+QUIZ_INDEX_DIR = PROJECT_ROOT / "vectorstores" / "quiz_v1"
+QUIZ_RETRIEVE_K = 3
+QUIZ_TOP_K_GEN = 3
 FINAL_TESTSET = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v3.json"
 FINAL_TESTSET_V2 = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v2.json"  # 관할 라벨 이전
 FINAL_TESTSET_RET = PROJECT_ROOT / "data" / "testset" / "rag_testset_retriever_v1v2_fixed450_team_eval_v3_retrieval.json"  # 검색 채점용 152

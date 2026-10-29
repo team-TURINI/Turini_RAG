@@ -4,6 +4,7 @@ python-dotenv>=1.0
 # LLM / Embedding
 # Multi-turn Query Rewriter/Summarizer가 사용하는 Responses API structured output 기준
 openai>=2.53.0
+tiktoken>=0.7
 anthropic>=0.60          # 프로바이더 간 모델 비교용
 google-genai>=1.0          # 프로바이더 간 모델 비교용
 langchain-openai>=0.1.7

@@ -34,6 +34,7 @@ from typing import Any, Optional
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from core import trace as _trace
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ class ChatRequest(BaseModel):
     state: Optional[dict[str, Any]] = Field(
         default=None, description="직전 응답의 state 를 그대로. 새 대화면 생략")
     portfolio: Optional[dict[str, Any]] = Field(default=None, description="앱이 매 요청에 넣어준다(저장 안 함)")
+    trace_username: Optional[str] = Field(default=None, max_length=100,
+        description="API 키로 인증된 앱 서버가 로그인 정보에서 정한 테스트 사용자. 브라우저 입력을 전달하지 말 것.")
 
 
 class ChatResponse(BaseModel):
@@ -130,12 +133,18 @@ def health() -> dict[str, Any]:
 def chat(req: ChatRequest, svc=Depends(service)) -> ChatResponse:
     t0 = time.time()
     try:
-        turn = svc.ask_stateless(req.user_id, req.question, state=req.state,
-                                 portfolio=req.portfolio, conversation_id=req.conversation_id)
+        allowed = {value.strip() for value in os.getenv("LANGSMITH_TEST_USERNAMES", "").split(",") if value.strip()}
+        # Shared-key authentication must be configured; omission/unknown username fails closed.
+        trace_allowed = bool(API_KEY and req.trace_username and req.trace_username in allowed)
+        with _trace.request_scope(trace_allowed):
+            turn = svc.ask_stateless(req.user_id, req.question, state=req.state,
+                                     portfolio=req.portfolio, conversation_id=req.conversation_id)
     except ValueError as exc:                                   # state 형식 오류·빈 질문
         raise HTTPException(status_code=422, detail=str(exc))
     pipe = getattr(svc.orchestrator.rag_adapter, "pipeline", None)
-    degraded = bool(getattr(getattr(pipe, "reranker", None), "last_failed", False))
+    degraded = turn.route != "quiz" and bool(
+        getattr(getattr(pipe, "reranker", None), "last_failed", False)
+    )
     return ChatResponse(
         answer=turn.answer, status=turn.status, state=turn.state, messages=turn.messages,
         suggested_title=turn.suggested_title, needs_portfolio=turn.needs_portfolio,

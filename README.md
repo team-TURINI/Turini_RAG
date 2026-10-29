@@ -61,6 +61,25 @@ cp .env.example .env      # OPENAI_API_KEY, COHERE_API_KEY 둘 다 입력
 
 없으면 `run_pipeline.py` 가 어느 파일이 없는지 알려주고 멈춘다.
 
+### 퀴즈 해설 인덱스
+
+퀴즈 데이터는 금융 코퍼스와 섞지 않고 별도 `vectorstores/quiz_v1/` 인덱스로 검색한다.
+빌더는 `Turini-e2e/public/data`의 퀴즈 864개와 진단 퀴즈 24개를 내려받고,
+`quizData_overrides.json` 수정사항을 적용해 `data/quizzes/quiz_corpus.jsonl`을 만든다.
+진단 데이터 중 정답이나 해설이 없는 항목도 유지하며, 프롬프트는 이 누락값을 추측하지 않게 한다.
+
+비용 산정만 하려면 승인 인자 없이 실행한다. 실제 임베딩은 비용을 확인한 뒤 승인 상한을 명시해야 한다.
+
+```bash
+python scripts/build_quiz_index.py
+# 예상 비용이 승인한 상한 이하임을 확인한 뒤에만 임베딩 실행
+python scripts/build_quiz_index.py --approve-cost-usd 0.05
+```
+
+퀴즈 질문은 별도 인덱스만 검색하고 기존 금융 인덱스·리랭커·관할 필터는 변경하지 않는다.
+코퍼스와 인덱스는 데이터 파일이므로 Git에는 올리지 않으며, Cloud Run 이미지 빌드에는
+`data/quizzes/quiz_corpus.jsonl`과 `vectorstores/quiz_v1/`이 필요하다.
+
 ### 3. 실행
 
 ```bash

@@ -41,6 +41,18 @@ class MultiTurnGeneratorAdapter:
             top_p=cfg.FINAL_TOP_P,
         )
 
+    def generate_quiz(self, rag_result: RAGContextResult) -> GenerationResult:
+        return self._general_generate(
+            rag_result.original_question,
+            list(rag_result.retrieved_context),
+            prompt_version="quiz",
+            placement="front",
+            model=cfg.FINAL_MODEL,
+            temperature=cfg.FINAL_TEMPERATURE,
+            max_tokens=cfg.FINAL_MAX_TOKENS,
+            top_p=cfg.FINAL_TOP_P,
+        )
+
     def generate_portfolio(
         self,
         rag_result: RAGContextResult,

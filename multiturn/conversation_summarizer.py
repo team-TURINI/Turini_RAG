@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable, Protocol, Sequence, TypedDict, cast
 
 from langsmith import traceable
+from core import trace as _trace
 
 from config import (
     LANGSMITH_API_KEY,
@@ -192,7 +193,7 @@ class ConversationSummarizer:
                 ) from exc
             return self._parse_response(response)
 
-        if not self.tracing_enabled:
+        if not self.tracing_enabled or not _trace.request_allowed():
             return invoke()
 
         trace_inputs = build_conversation_summary_trace_inputs(

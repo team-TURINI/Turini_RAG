@@ -221,6 +221,19 @@ JSON Schema로만 결과를 반환하라.
 - [7단계] '아 씨 ETF가 뭐야?'는 명확한 금융 질문이므로 route='rag'다.
 """
 
+QUIZ_ROUTING_RULES = """
+
+[퀴즈 해설 route]
+- 사용자가 '퀴즈', '문제', '문항', '선택지', '정답', '오답' 또는 자신이 고른 답을 언급하며 그 문항의 정답·해설·답의 이유·정오 여부를 묻는다면 route="quiz"로 분류한다. 문항 ID가 없어도 문제 내용이나 대화 문맥으로 검색할 수 있으면 퀴즈 경로를 사용한다.
+- 예: '주식을 사면 채권자야, 주주야? 문제에서 정답이 주주라는데 왜 그런지 설명해줘.'는 route="quiz"다. '주주가 뭐야?'처럼 퀴즈 문항을 묻는 맥락 없이 금융 개념만 묻는 질문은 route="rag"다.
+- route="quiz"의 retrieval_query에는 문항 번호/ID가 있으면 이를 포함하고, ID가 없으면 질문 내용·선택지·사용자가 언급한 정답 등 확인되는 식별 단서를 유지한다. ID가 없다는 이유만으로 route="clarify"로 바꾸거나 ID를 되묻지 않는다.
+- 일반 금융 지식 질문은 기존처럼 route="rag"로 분류한다. 단순히 금융 용어나 '왜'가 들어 있다는 이유만으로 quiz로 보내지 않는다.
+- route="quiz"는 퀴즈 코퍼스에서만 검색하므로 needs_portfolio=false로 둔다.
+- 문제 내용이나 관련 대화도 없어 어떤 문항인지 전혀 특정할 수 없는 '이 문제 해설해줘' 같은 질문만 route="clarify"로 둔다.
+"""
+QUERY_REWRITE_SYSTEM_PROMPT_V1 += QUIZ_ROUTING_RULES
+QUERY_REWRITE_SYSTEM_PROMPT_V2 += QUIZ_ROUTING_RULES
+
 QUERY_REWRITE_PROMPTS = {"v1": QUERY_REWRITE_SYSTEM_PROMPT_V1, "v2": QUERY_REWRITE_SYSTEM_PROMPT_V2}
 QUERY_REWRITE_PROMPT_VERSION = os.getenv("QUERY_REWRITE_PROMPT_VERSION", "v2").strip() or "v2"
 if QUERY_REWRITE_PROMPT_VERSION not in QUERY_REWRITE_PROMPTS:

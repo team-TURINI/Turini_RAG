@@ -149,6 +149,47 @@ class MultiTurnRuntimeTest(unittest.TestCase):
             QUERY_REWRITE_SYSTEM_PROMPT,
         )
 
+    def test_quiz_route_is_supported_and_keeps_quiz_search_query(self) -> None:
+        current = "Q001의 정답과 해설을 알려줘"
+        responses = FakeResponsesAPI(
+            query_payload(
+                current,
+                "Q001 주식 퀴즈 정답 해설",
+                is_followup=False,
+                needs_portfolio=False,
+                route="quiz",
+            )
+        )
+
+        result = QueryRewriter(client=FakeOpenAIClient(responses)).rewrite(
+            current,
+            ConversationState(),
+        )
+
+        self.assertEqual(result.route, "quiz")
+        self.assertEqual(result.retrieval_query, "Q001 주식 퀴즈 정답 해설")
+        self.assertIn('route="quiz"', QUERY_REWRITE_SYSTEM_PROMPT)
+        self.assertIn("문항 ID가 없어도", QUERY_REWRITE_SYSTEM_PROMPT)
+        self.assertIn("주주라는데 왜 그런지 설명해줘", QUERY_REWRITE_SYSTEM_PROMPT)
+
+    def test_quiz_route_cannot_require_portfolio(self) -> None:
+        current = "Q001의 정답과 해설을 알려줘"
+        responses = FakeResponsesAPI(
+            query_payload(
+                current,
+                "Q001 주식 퀴즈 정답 해설",
+                is_followup=False,
+                needs_portfolio=True,
+                route="quiz",
+            )
+        )
+
+        with self.assertRaisesRegex(QueryRewriteError, "needs_portfolio는 false"):
+            QueryRewriter(client=FakeOpenAIClient(responses)).rewrite(
+                current,
+                ConversationState(),
+            )
+
     def test_existing_pair_ordinal_and_topic_callback_referents_remain_supported(
         self,
     ) -> None:
@@ -230,7 +271,7 @@ class MultiTurnRuntimeTest(unittest.TestCase):
         self.assertTrue(response_format["strict"])
         self.assertEqual(
             response_format["schema"]["properties"]["route"]["enum"],
-            ["rag", "direct", "clarify"],
+            ["rag", "quiz", "direct", "clarify"],
         )
 
     def test_portfolio_is_hidden_but_needs_portfolio_rag_is_allowed(self) -> None:

@@ -77,6 +77,30 @@ class CollectTest(unittest.TestCase):
         self.assertIsNone(trace._turn_diag.get())
 
 
+class RequestScopeTest(unittest.TestCase):
+    def test_request_scope_disables_sdk_and_restores_after_error(self) -> None:
+        from langsmith.run_helpers import get_tracing_context
+        with mock.patch.object(trace._cfg, "LANGSMITH_TRACING", True), \
+             mock.patch.object(trace._cfg, "LANGSMITH_API_KEY", "test-only-key"):
+            self.assertTrue(trace.enabled())
+            with self.assertRaises(ValueError):
+                with trace.request_scope(False):
+                    self.assertFalse(trace.enabled())
+                    self.assertFalse(get_tracing_context()["enabled"])
+                    raise ValueError("test")
+            self.assertTrue(trace.request_allowed())
+            with trace.request_scope(True):
+                self.assertTrue(trace.enabled())
+                self.assertTrue(get_tracing_context()["enabled"])
+
+    def test_gate_is_context_local_not_process_global(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        with trace.request_scope(False):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                self.assertTrue(pool.submit(trace.request_allowed).result())
+            self.assertFalse(trace.request_allowed())
+
+
 class SpanTest(unittest.TestCase):
     def test_disabled_span_is_noop(self) -> None:
         with mock.patch.object(trace, "enabled", return_value=False):

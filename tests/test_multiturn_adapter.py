@@ -11,7 +11,9 @@ from multiturn.state import ConversationState
 class FakeFinalPipeline:
     def __init__(self) -> None:
         self.retrieve_calls: list[str] = []
+        self.retrieve_quiz_calls: list[str] = []
         self.build_context_calls: list[list[str]] = []
+        self.build_quiz_context_calls: list[list[str]] = []
         self.run_calls = 0
         self.retrieval_result = {
             "dense": ["dense-1"],
@@ -27,6 +29,14 @@ class FakeFinalPipeline:
     def build_context(self, ranked_ids: list[str]) -> list[str]:
         self.build_context_calls.append(list(ranked_ids))
         return [f"context:{chunk_id}" for chunk_id in ranked_ids[:3]]
+
+    def retrieve_quiz(self, question: str) -> dict[str, list[str]]:
+        self.retrieve_quiz_calls.append(question)
+        return {"reranked": ["quiz:Q001"]}
+
+    def build_quiz_context(self, ranked_ids: list[str]) -> list[str]:
+        self.build_quiz_context_calls.append(list(ranked_ids))
+        return [f"quiz-context:{chunk_id}" for chunk_id in ranked_ids]
 
     def run(self, question: str) -> None:
         self.run_calls += 1
@@ -108,6 +118,20 @@ class MultiTurnRAGAdapterTest(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(pipeline.retrieve_calls, [])
+
+    def test_quiz_route_uses_only_the_separate_quiz_index(self) -> None:
+        pipeline = FakeFinalPipeline()
+        rewrite = rewrite_result(route="quiz", retrieval_query="Q001 정답 해설")
+
+        result = MultiTurnRAGAdapter(pipeline).retrieve_context(rewrite)
+
+        self.assertEqual(pipeline.retrieve_quiz_calls, [rewrite.retrieval_query])
+        self.assertEqual(pipeline.retrieve_calls, [])
+        self.assertEqual(pipeline.build_quiz_context_calls, [["quiz:Q001"]])
+        self.assertEqual(pipeline.build_context_calls, [])
+        assert result is not None
+        self.assertEqual(result.source, "quiz")
+        self.assertEqual(result.retrieved_context, ("quiz-context:quiz:Q001",))
 
     def test_reranked_ids_are_passed_to_build_context(self) -> None:
         pipeline = FakeFinalPipeline()

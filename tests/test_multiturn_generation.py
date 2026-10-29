@@ -23,6 +23,14 @@ class FakeFinalPipeline:
         self.build_context_calls.append(list(ranked_ids))
         return ["금융 context 2", "금융 context 1"]
 
+    def retrieve_quiz(self, question: str) -> dict[str, list[str]]:
+        self.retrieve_calls.append(f"quiz:{question}")
+        return {"reranked": ["quiz:Q001"]}
+
+    def build_quiz_context(self, ranked_ids: list[str]) -> list[str]:
+        self.build_context_calls.append(list(ranked_ids))
+        return ["quiz question, answer, and explanation"]
+
 
 class FakeQueryRewriter:
     def __init__(self, result: QueryRewriteResult) -> None:
@@ -164,6 +172,24 @@ class MultiTurnGenerationTest(unittest.TestCase):
         self.assertEqual(pipeline.retrieve_calls, [])
         self.assertEqual(calls.general_calls, [])
         self.assertEqual(calls.portfolio_calls, [])
+
+    def test_quiz_route_uses_dedicated_explanation_prompt(self) -> None:
+        orchestrator, pipeline, calls = build_orchestrator(
+            rewrite(route="quiz")
+        )
+
+        result = orchestrator.generate_turn("정답 해설을 알려줘", ConversationState())
+
+        self.assertEqual(result.generation_status, "generated")
+        self.assertEqual(result.generation_profile, "quiz")
+        self.assertEqual(
+            pipeline.retrieve_calls,
+            [f"quiz:{result.rewrite_result.retrieval_query}"],
+        )
+        self.assertEqual(len(calls.general_calls), 1)
+        self.assertEqual(calls.portfolio_calls, [])
+        _, kwargs = calls.general_calls[0]
+        self.assertEqual(kwargs["prompt_version"], "quiz")
 
     def test_retrieval_and_generation_questions_remain_distinct(self) -> None:
         orchestrator, pipeline, calls = build_orchestrator(rewrite())

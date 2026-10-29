@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable, Literal, Protocol, TypedDict, cast
 
 from langsmith import traceable
+from core import trace as _trace
 
 from config import (
     LANGSMITH_API_KEY,
@@ -23,7 +24,7 @@ from multiturn.state import ConversationState
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-QueryRoute = Literal["rag", "direct", "clarify"]
+QueryRoute = Literal["rag", "quiz", "direct", "clarify"]
 ALLOWED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 
@@ -67,7 +68,7 @@ QUERY_REWRITE_JSON_SCHEMA: dict[str, Any] = {
         "retrieval_query": {"type": "string"},
         "is_followup": {"type": "boolean"},
         "needs_portfolio": {"type": "boolean"},
-        "route": {"type": "string", "enum": ["rag", "direct", "clarify"]},
+        "route": {"type": "string", "enum": ["rag", "quiz", "direct", "clarify"]},
     },
     "required": [
         "original_question",
@@ -226,7 +227,7 @@ class QueryRewriter:
             response = self.client.responses.create(**request)
             return self._parse_response(response, original_question=current_question)
 
-        if not self.tracing_enabled:
+        if not self.tracing_enabled or not _trace.request_allowed():
             return invoke()
 
         trace_inputs = build_query_rewrite_trace_inputs(
@@ -300,10 +301,12 @@ class QueryRewriter:
             raise QueryRewriteError("is_followup은 bool이어야 합니다.")
         if type(needs_portfolio) is not bool:
             raise QueryRewriteError("needs_portfolio는 bool이어야 합니다.")
-        if route not in {"rag", "direct", "clarify"}:
-            raise QueryRewriteError("route는 rag, direct, clarify 중 하나여야 합니다.")
-        if route == "rag" and not retrieval_query.strip():
-            raise QueryRewriteError("route가 rag이면 retrieval_query는 비어 있을 수 없습니다.")
+        if route not in {"rag", "quiz", "direct", "clarify"}:
+            raise QueryRewriteError("route는 rag, quiz, direct, clarify 중 하나여야 합니다.")
+        if route in {"rag", "quiz"} and not retrieval_query.strip():
+            raise QueryRewriteError("route가 rag 또는 quiz이면 retrieval_query는 비어 있을 수 없습니다.")
+        if route == "quiz" and needs_portfolio:
+            raise QueryRewriteError("route가 quiz이면 needs_portfolio는 false여야 합니다.")
 
         return QueryRewriteResult(
             original_question=original_question,

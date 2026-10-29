@@ -29,9 +29,11 @@ COPY scripts/answer_spec.py ./scripts/
 #   (A) 이미지에 포함 — 아래 COPY 3줄 주석 해제. Cloud Run 권장(Artifact Registry 는 비공개,
 #       HF 계정·토큰 불필요, 기동 때 27MB 다운로드 없음). .dockerignore 는 이 경로들을 막지 않는다.
 #   (B) 기동 때 HF 비공개 Dataset 에서 내려받기 — HF_DATASET · HF_TOKEN (serve/bootstrap.py)
-# COPY data/chunking_data/fixed_450_70/clean_chunks_450_70_v2.jsonl ./data/chunking_data/fixed_450_70/
-# COPY data/jurisdiction.json ./data/
-# COPY vectorstores/fixed_450_70_v2/ ./vectorstores/fixed_450_70_v2/
+COPY data/chunking_data/fixed_450_70/clean_chunks_450_70_v2.jsonl ./data/chunking_data/fixed_450_70/
+COPY data/jurisdiction.json ./data/
+COPY vectorstores/fixed_450_70_v2/ ./vectorstores/fixed_450_70_v2/
+COPY data/quizzes/quiz_corpus.jsonl ./data/quizzes/
+COPY vectorstores/quiz_v1/ ./vectorstores/quiz_v1/
 
 ENV PORT=7860 \
     PYTHONUNBUFFERED=1

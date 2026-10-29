@@ -101,7 +101,18 @@ class MultiTurnOrchestrator:
             )
 
         if prepared.rag_result is None:
-            raise RuntimeError("route='rag'인데 retrieval 결과가 없습니다.")
+            raise RuntimeError(f"route={rewrite.route!r}인데 retrieval 결과가 없습니다.")
+        if rewrite.route == "quiz":
+            if self.generator_adapter is None:
+                raise RuntimeError("퀴즈 해설을 생성하려면 generator_adapter가 필요합니다.")
+            generation = self.generator_adapter.generate_quiz(prepared.rag_result)
+            return MultiTurnGenerationResult(
+                rewrite_result=rewrite,
+                rag_result=prepared.rag_result,
+                generation_status="generated",
+                generation_result=generation,
+                generation_profile="quiz",
+            )
         if rewrite.needs_portfolio and state.portfolio_context is None:
             return MultiTurnGenerationResult(
                 rewrite_result=rewrite,

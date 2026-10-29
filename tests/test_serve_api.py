@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -14,13 +15,15 @@ class FakeService:
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.route = "rag"
         self.reranker = SimpleNamespace(last_failed=False)
         self.orchestrator = SimpleNamespace(
             rag_adapter=SimpleNamespace(pipeline=SimpleNamespace(corpus={"c": 1}, reranker=self.reranker)))
 
     def ask_stateless(self, user_id, question, *, state=None, portfolio=None, conversation_id=None):
         self.calls.append({"user_id": user_id, "question": question, "state": state,
-                           "portfolio": portfolio, "conversation_id": conversation_id})
+                           "portfolio": portfolio, "conversation_id": conversation_id,
+                           "trace_allowed": api._trace.request_allowed()})
         if state is not None and state.get("version") not in (None, 1):
             raise ValueError("state.version 지원 안 함")
         prev = (state or {}).get("messages", [])
@@ -31,7 +34,7 @@ class FakeService:
             messages=[{"role": "user", "content": question},
                       {"role": "assistant", "content": f"답변:{question}", "meta": {"status": "generated"}}],
             suggested_title=question[:40] if not prev else None,
-            retrieval_query=f"검색:{question}", route="rag", is_followup=bool(prev),
+            retrieval_query=f"검색:{question}", route=self.route, is_followup=bool(prev),
             needs_portfolio=False, profile="v2_4j", summary_updated=False)
 
 
@@ -97,6 +100,15 @@ class ServeApiTest(unittest.TestCase):
         self.svc.reranker.last_failed = True
         self.assertTrue(self.client.post("/chat", json={"user_id": "u1", "question": "질문"}).json()["degraded"])
 
+    def test_quiz_route_is_not_marked_degraded_by_a_previous_rerank_failure(self) -> None:
+        self.svc.route = "quiz"
+        self.svc.reranker.last_failed = True
+        response = self.client.post(
+            "/chat",
+            json={"user_id": "u1", "question": "퀴즈 정답 해설"},
+        )
+        self.assertFalse(response.json()["degraded"])
+
     def test_schema_validation(self) -> None:
         self.assertEqual(self.client.post("/chat", json={"user_id": "u1", "question": ""}).status_code, 422)
         self.assertEqual(self.client.post("/chat", json={"question": "q"}).status_code, 422)
@@ -124,6 +136,22 @@ class ServeApiAuthTest(unittest.TestCase):
         self.assertEqual(self.client.post("/chat", json=body).status_code, 401)
         self.assertEqual(self.client.post("/chat", json=body, headers={"X-API-Key": "wrong-key"}).status_code, 401)
         self.assertEqual(self.client.post("/chat", json=body, headers={"X-API-Key": "secret"}).status_code, 200)
+
+    def test_tracing_requires_authenticated_exact_test_username(self) -> None:
+        with mock.patch.dict("os.environ", {"LANGSMITH_TEST_USERNAMES": "turini"}):
+            for username, expected in [(None, False), ("other", False), ("turini-admin", False), ("turini", True)]:
+                body = {"user_id": "uuid-from-web", "question": "테스트"}
+                if username is not None:
+                    body["trace_username"] = username
+                response = self.client.post("/chat", json=body, headers={"X-API-Key": "secret"})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(api._state["service"].calls[-1]["trace_allowed"], expected)
+
+    def test_no_allowlist_disables_tracing(self) -> None:
+        with mock.patch.dict("os.environ", {"LANGSMITH_TEST_USERNAMES": ""}):
+            self.client.post("/chat", json={"user_id": "u", "question": "테스트", "trace_username": "turini"},
+                             headers={"X-API-Key": "secret"})
+            self.assertFalse(api._state["service"].calls[-1]["trace_allowed"])
 
     def test_health_is_open(self) -> None:
         self.assertEqual(self.client.get("/health").status_code, 200)

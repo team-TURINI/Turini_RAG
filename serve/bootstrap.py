@@ -12,6 +12,9 @@ Dataset 안의 경로는 이 저장소의 상대 경로와 같아야 한다:
   data/jurisdiction.json
   vectorstores/fixed_450_70_v2/index.faiss
   vectorstores/fixed_450_70_v2/index.pkl
+  data/quizzes/quiz_corpus.jsonl
+  vectorstores/quiz_v1/index.faiss
+  vectorstores/quiz_v1/index.pkl
 """
 
 from __future__ import annotations
@@ -27,7 +30,9 @@ log = logging.getLogger(__name__)
 
 def required_files() -> list[Path]:
     return [cfg.FINAL_CORPUS, cfg.JURISDICTION_PATH,
-            cfg.FINAL_INDEX_DIR / "index.faiss", cfg.FINAL_INDEX_DIR / "index.pkl"]
+            cfg.FINAL_INDEX_DIR / "index.faiss", cfg.FINAL_INDEX_DIR / "index.pkl",
+            cfg.QUIZ_CORPUS, cfg.QUIZ_INDEX_DIR / "index.faiss",
+            cfg.QUIZ_INDEX_DIR / "index.pkl"]
 
 
 def missing_files() -> list[Path]:

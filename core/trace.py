@@ -40,9 +40,29 @@ MASK = "***"
 # 값을 가리지 않아도 되는 키 — 구조 파악에 필요하고 개인 식별 정보가 아니다
 PORTFOLIO_KEEP_KEYS = {"input_mode", "level_type", "risk_type"}
 
+# API sets a per-request gate; CLI retains the existing global tracing behavior.
+_request_allowed: ContextVar[bool] = ContextVar("langsmith_request_allowed", default=True)
+
+
+def request_allowed() -> bool:
+    return _request_allowed.get()
+
+
+@contextmanager
+def request_scope(allowed: bool) -> Iterator[None]:
+    """Gate both custom spans and wrapped SDK calls without mutating global settings."""
+    from langsmith import tracing_context
+
+    token = _request_allowed.set(allowed)
+    try:
+        with tracing_context(enabled=enabled()):
+            yield
+    finally:
+        _request_allowed.reset(token)
+
 
 def enabled() -> bool:
-    return bool(getattr(_cfg, "LANGSMITH_TRACING", False) and getattr(_cfg, "LANGSMITH_API_KEY", None))
+    return bool(request_allowed() and getattr(_cfg, "LANGSMITH_TRACING", False) and getattr(_cfg, "LANGSMITH_API_KEY", None))
 
 
 def portfolio_raw() -> bool:

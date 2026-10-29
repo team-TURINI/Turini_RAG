@@ -97,7 +97,7 @@ class PortfolioGeneratorTest(unittest.TestCase):
 
     def test_v2_4_prompt_text_and_preset_remain_unchanged(self) -> None:
         expected_v2_sha256 = (
-            "b0144d81bb91dfbefc9cd17b5b9f4e36dbd378033a7d9316280af5e00404a690"
+            "d720c76f147810bffd120ed49cccc333afb35eef029bf075dba8b42104bedcc3"
         )
 
         self.assertEqual(
@@ -105,6 +105,12 @@ class PortfolioGeneratorTest(unittest.TestCase):
             expected_v2_sha256,
         )
         self.assertEqual(generator.resolve_preset("v2_4"), ("v2", "check"))
+
+    def test_yes_no_opening_is_limited_to_actual_binary_questions(self) -> None:
+        prompt = generator.get_prompt("v2")
+        self.assertIn('실제로 예/아니오 판단을 물은 질문에만', prompt)
+        self.assertIn('속담·비유를 풀어 달라는 열린 질문에는 "네/아니요"를 붙이지 말고', prompt)
+        self.assertIn('설명·정의·이유·방법·비유 풀이 질문에는 불필요한 "네/아니요"를 붙이지 마세요', generator.USER_TEMPLATE_CHECK)
 
     def test_v2_p_forbids_cross_field_causality_and_suitability_inference(self) -> None:
         rules = generator.PORTFOLIO_RULES

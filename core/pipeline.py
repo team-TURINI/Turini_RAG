@@ -90,6 +90,17 @@ class FinalPipeline:
                 print(f"[load] 관할 라벨 {self.jmap.version} 청크 {self.jmap.counts}")
         if verbose:
             print(f"[load] 코퍼스 {len(self.corpus)}청크")
+        self.quiz_corpus: Dict[str, dict] | None = None
+        self.quiz_dense: DenseIndexRetriever | None = None
+        quiz_files = (
+            _cfg.QUIZ_CORPUS,
+            _cfg.QUIZ_INDEX_DIR / "index.faiss",
+            _cfg.QUIZ_INDEX_DIR / "index.pkl",
+        )
+        if all(path.exists() for path in quiz_files):
+            self._load_quiz_data()
+        if verbose and self.quiz_corpus is not None:
+            print(f"[load] 퀴즈 코퍼스 {len(self.quiz_corpus)}문항 / FAISS {_cfg.QUIZ_INDEX_DIR.name}")
         dense = DenseIndexRetriever(_cfg.FINAL_INDEX_DIR)
         if verbose:
             print(f"[load] FAISS {_cfg.FINAL_INDEX_DIR.name}")
@@ -126,6 +137,44 @@ class FinalPipeline:
                 break
             out.append(text)
         return out
+
+    def retrieve_quiz(self, question: str) -> Dict[str, List[str]]:
+        """별도 퀴즈 FAISS 검색. 금융 코퍼스·관할 필터·Cohere 리랭커와 섞지 않는다."""
+        self._load_quiz_data()
+        assert self.quiz_dense is not None
+        ranked = self.quiz_dense.search(question, _cfg.QUIZ_RETRIEVE_K)
+        return {"reranked": ranked}
+
+    def build_quiz_context(self, ranked_ids: List[str]) -> List[str]:
+        self._load_quiz_data()
+        assert self.quiz_corpus is not None
+        out: List[str] = []
+        for chunk_id in ranked_ids:
+            text = self.quiz_corpus.get(chunk_id, {}).get("embedding_text", "")
+            if not text:
+                continue
+            if len(out) >= _cfg.QUIZ_TOP_K_GEN:
+                break
+            out.append(text)
+        return out
+
+    def _load_quiz_data(self) -> None:
+        if self.quiz_corpus is not None and self.quiz_dense is not None:
+            return
+        quiz_files = (
+            _cfg.QUIZ_CORPUS,
+            _cfg.QUIZ_INDEX_DIR / "index.faiss",
+            _cfg.QUIZ_INDEX_DIR / "index.pkl",
+        )
+        missing = [path for path in quiz_files if not path.exists()]
+        if missing:
+            paths = "\n".join(f"  - {path}" for path in missing)
+            raise FileNotFoundError(
+                f"퀴즈 검색 데이터가 없습니다:\n{paths}\n"
+                "`python scripts/build_quiz_index.py --approve-cost-usd 0.05` 로 빌드하세요."
+            )
+        self.quiz_corpus = load_corpus(_cfg.QUIZ_CORPUS)
+        self.quiz_dense = DenseIndexRetriever(_cfg.QUIZ_INDEX_DIR)
 
     def chunk_brief(self, chunk_id: str) -> Dict[str, Any]:
         """청크 한 줄 요약 — 출처·국가가 보여야 '왜 이게 올라왔나'를 판단할 수 있다."""
