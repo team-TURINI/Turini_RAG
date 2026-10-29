@@ -97,7 +97,7 @@ class PortfolioGeneratorTest(unittest.TestCase):
 
     def test_v2_4_prompt_text_and_preset_remain_unchanged(self) -> None:
         expected_v2_sha256 = (
-            "d720c76f147810bffd120ed49cccc333afb35eef029bf075dba8b42104bedcc3"
+            "20c62062a52b3cd4430df62768dfb29da0d86cdb798fdc59f3d1cb30db563c4a"
         )
 
         self.assertEqual(
@@ -106,11 +106,26 @@ class PortfolioGeneratorTest(unittest.TestCase):
         )
         self.assertEqual(generator.resolve_preset("v2_4"), ("v2", "check"))
 
-    def test_yes_no_opening_is_limited_to_actual_binary_questions(self) -> None:
+    def test_answers_do_not_start_with_acknowledgements_or_cite_sources(self) -> None:
         prompt = generator.get_prompt("v2")
-        self.assertIn('실제로 예/아니오 판단을 물은 질문에만', prompt)
-        self.assertIn('속담·비유를 풀어 달라는 열린 질문에는 "네/아니요"를 붙이지 말고', prompt)
-        self.assertIn('설명·정의·이유·방법·비유 풀이 질문에는 불필요한 "네/아니요"를 붙이지 마세요', generator.USER_TEMPLATE_CHECK)
+        self.assertIn('"네", "아니요" 같은 맞장구로 시작하지 말고', prompt)
+        self.assertIn('"주식은 배당을 받을 수 있지만 회사가 배당을 결정한 경우에 한합니다"', prompt)
+        self.assertIn("자료 번호를 언급하거나 인용하지 말 것", prompt)
+        self.assertIn('"[문서 1]"처럼 인용하지 마세요', generator.USER_TEMPLATE_CHECK)
+
+    def test_context_formatter_does_not_expose_document_number_labels(self) -> None:
+        contexts = ["퀴즈 정답 및 해설", "관련 금융 지식"]
+
+        formatted = generator.format_contexts(contexts)
+
+        self.assertEqual(formatted, "퀴즈 정답 및 해설\n\n관련 금융 지식")
+        self.assertNotIn("[문서", formatted)
+
+    def test_quiz_prompt_forbids_source_citations_and_acknowledgement_openings(self) -> None:
+        prompt = generator.get_prompt("quiz")
+
+        self.assertIn("자료 번호를 인용하지 마세요", prompt)
+        self.assertIn('"네/아니요" 같은 맞장구로 시작하지 말고', prompt)
 
     def test_v2_p_forbids_cross_field_causality_and_suitability_inference(self) -> None:
         rules = generator.PORTFOLIO_RULES
